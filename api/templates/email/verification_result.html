@@ -1,0 +1,87 @@
+{% extends "email/base_email.html" %}
+{% load static %}
+
+{% block content %}
+<div class="container">
+    <div class="verification-card">
+        {% if status == 'success' %}
+        <div class="success-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#4CAF50" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+        </div>
+        <h1>Email Verified Successfully! 🎉</h1>
+        <p>Your email has been verified. You can now close this window and continue using your account.</p>
+        <a href="{{ frontend_url }}auth/login" class="button">Go to Login</a>
+        
+        {% elif status == 'already_verified' %}
+        <div class="info-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#2196F3" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+            </svg>
+        </div>
+        <h1>Already Verified ✓</h1>
+        <p>Your email was already verified. You can continue using your account.</p>
+        <a href="{{ frontend_url }}auth/login" class="button">Go to Login</a>
+        
+        {% else %}
+        <div class="error-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="15" y1="9" x2="9" y2="15"></line>
+                <line x1="9" y1="9" x2="15" y2="15"></line>
+            </svg>
+        </div>
+        <h1>Verification Failed ❌</h1>
+        <p>{{ message }}</p>
+        <p>Please try again or contact support if the problem persists.</p>
+        <a href="{{ frontend_url }}auth/register" class="button">Register Again</a>
+        {% endif %}
+    </div>
+</div>
+
+<style>
+    .verification-card {
+        background: white;
+        padding: 2rem;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        text-align: center;
+        max-width: 400px;
+        margin: 2rem auto;
+    }
+
+    .success-icon, .error-icon, .info-icon {
+        margin-bottom: 1.5rem;
+    }
+
+    h1 {
+        color: #333;
+        margin-bottom: 1rem;
+        font-size: 1.5rem;
+    }
+
+    p {
+        color: #666;
+        margin-bottom: 1.5rem;
+        line-height: 1.5;
+    }
+
+    .button {
+        display: inline-block;
+        padding: 0.75rem 1.5rem;
+        background-color: #2563eb;
+        color: white;
+        text-decoration: none;
+        border-radius: 5px;
+        transition: background-color 0.3s;
+    }
+
+    .button:hover {
+        background-color: #1d4ed8;
+    }
+</style>
+{% endblock %}

@@ -1,0 +1,59 @@
+from django.shortcuts import render
+from api.models import CustomUser
+from rest_framework import generics
+from .serializers import UserSerializer
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework_simplejwt.views import TokenObtainPairView
+
+from django.core.mail import send_mail
+from django.template.loader import render_to_string
+from django.conf import settings
+
+class UserRegistrationView(generics.CreateAPIView):
+    queryset = CustomUser.objects.all()
+    permission_classes = [AllowAny]
+    serializer_class = UserSerializer
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    def get_queryset(self):
+        return self.queryset.select_related('user')
+
+
+class UserRegistrationView(generics.CreateAPIView):
+    queryset = CustomUser.objects.all()
+    permission_classes = [AllowAny]
+    serializer_class = UserSerializer
+
+    def perform_create(self, serializer):
+        user = serializer.save()
+        
+        try:
+            # Create verification token (you already have this in your model!)
+            verification_token = user.verification_token
+            
+            # Create verification link
+            verification_url = f"http://127.0.0.1:8000//verify/{verification_token}"
+            
+            # Create HTML email content
+            html_message = render_to_string(
+                'email/welcome.html',  # You'll need to create this template
+                {
+                    'user': user,
+                    'verification_url': verification_url,
+                }
+            )
+
+            send_mail(
+                subject='Welcome to HealthPoint! 🏥',
+                message=f'Hi {user.first_name}, please verify your email at {verification_url}',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                html_message=html_message,
+                fail_silently=False,
+            )
+            print("Template loaded successfully!")
+        except Exception as e:
+            # Log the error but don't stop registration
+            print(f"Failed to send email: {e}")
+
+        return user    
