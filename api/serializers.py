@@ -2,8 +2,14 @@ from api.models import CustomUser
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from api.utils.token_utils import build_user_token_data
+from api.models.medical.hospital_registration import HospitalRegistration
+from api.models import Hospital
+from api.models.medical.hospital_auth import HospitalAdmin
+from .tokens import HospitalAdminToken
+from django.contrib.auth import get_user_model
+from rest_framework_simplejwt.tokens import RefreshToken
 
-
+CustomUser = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(write_only=True, required=True)
@@ -76,26 +82,35 @@ class UserProfileSerializer(serializers.ModelSerializer):
     
     def get_full_name(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip()
-class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    @classmethod
-    def get_token(cls, user):
-        token = super().get_token(user)
-        
-        # Add organized user data
-        token['user_data'] = build_user_token_data(user)
-        
-        return token
 
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
-        refresh = self.get_token(self.user)
+        user = self.user
         
-        data['access'] = str(refresh.access_token)
-        data['refresh'] = str(refresh)
-        data['user_data'] = refresh['user_data']
+        # Create user_data dictionary
+        user_data = {
+            'id': user.id,
+            'email': user.email,
+            'full_name': f"{user.first_name} {user.last_name}".strip(),
+            'is_verified': user.is_email_verified,
+            'role': user.role,
+            'hpn': user.hpn,
+            'nin': user.nin,
+            'phone': user.phone,
+            'country': user.country,
+            'state': user.state,
+            'city': user.city,
+            'date_of_birth': user.date_of_birth,
+            'gender': user.gender,
+            'has_completed_onboarding': user.has_completed_onboarding
+        }
+        
+        # Add user_data to the response
+        data['user_data'] = user_data
         
         return data
-    
+
 class EmailVerificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
@@ -124,3 +139,49 @@ class OnboardingStatusSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         fields = ['has_completed_onboarding']          
+
+class UserDetailSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomUser
+        fields = ['id', 'email', 'first_name', 'last_name', 'phone']
+
+class HospitalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Hospital
+        fields = ['id', 'name']
+
+class HospitalRegistrationSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    hospital = HospitalSerializer(read_only=True)
+
+    class Meta:
+        model = HospitalRegistration
+        fields = [
+            'id',
+            'user',
+            'hospital',
+            'status',
+            'is_primary',
+            'created_at',
+            'approved_date'
+        ]
+
+class HospitalBasicSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Hospital
+        fields = ['id', 'name', 'city', 'state', 'country']          
+
+class HospitalAdminRegistrationSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True)
+    
+    class Meta:
+        model = HospitalAdmin
+        fields = ['email', 'name', 'hospital', 'position', 'password']
+        
+    def create(self, validated_data):
+        password = validated_data.pop('password')
+        admin = HospitalAdmin.objects.create_hospital_admin(
+            password=password,
+            **validated_data
+        )
+        return admin          

@@ -274,3 +274,21 @@ Automate the creation of medical records and the anonymization process on user d
 This documentation should serve as a comprehensive note on how our data models work within the PHB platform, ensuring clarity even for non-technical stakeholders.
 
 Feel free to adjust or expand on this document as your project evolves. Happy coding, and great work keeping detailed documentation!
+
+>>> from api.models import HospitalAdmin, CustomUser
+>>> from django.contrib.auth import get_user_model
+>>> from api.views import pending_registrations
+>>> from rest_framework.test import APIRequestFactory
+>>> from rest_framework.test import APIRequestFactory
+
+# First get the admin
+>>> admin = HospitalAdmin.objects.first()
+>>> admin_user = admin.user
+>>> print(f"Admin email: {admin_user.email}")
+
+# Now create the test request
+>>> factory = APIRequestFactory()
+>>> request = factory.get('/api/hospitals/registrations/')
+>>> force_authenticate(request, user=admin_user)
+>>> response = pending_registrations(request)
+>>> print(f"Response data: {response.data}")

@@ -90,7 +90,11 @@ class GPPracticeAdmin(admin.ModelAdmin):
 class GeneralPractitionerAdmin(admin.ModelAdmin):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated, IsMedicalStaff]
-    list_display = ['first_name', 'last_name', 'license_number', 'practice']
-    search_fields = ['first_name', 'last_name', 'license_number']
+    list_display = ['get_full_name', 'license_number', 'practice']
+    search_fields = ['user__first_name', 'user__last_name', 'license_number']
+    
+    def get_full_name(self, obj):
+        return f"Dr. {obj.user.get_full_name()}"
+    get_full_name.short_description = 'Name'
 
 admin.site.register(CustomUser, CustomUserAdmin)
