@@ -4,24 +4,16 @@ from django.db import models
 from ..user.custom_user import CustomUser
 
 class MedicalRecord(models.Model):
-    # Use string reference instead of direct import
-    user = models.ForeignKey(
+    # One-to-one relationship with User
+    user = models.OneToOneField(
         'api.CustomUser',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='medical_records'
+        related_name='medical_record'
     )
-    # We use the HPN as the central identifier.
+    # We use the HPN as the central identifier
     hpn = models.CharField(max_length=30, unique=True)
-    # Optionally link to the user (nullable, in case of anonymization)
-    #user = models.OneToOneField(
-   # CustomUser,
-   # on_delete=models.SET_NULL,
-   # null=True,
-  #  blank=True,
-   # related_name='medical_record'
-#)
     is_anonymous = models.BooleanField(default=False)  # Flag for anonymization
 
     # Medical details

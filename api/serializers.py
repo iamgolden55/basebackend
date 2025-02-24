@@ -12,7 +12,37 @@ from rest_framework_simplejwt.tokens import RefreshToken
 CustomUser = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
-    full_name = serializers.CharField(write_only=True, required=True)
+    full_name = serializers.CharField(write_only=True, required=True, error_messages={
+        'required': 'Please provide your full name.',
+        'blank': 'Full name cannot be empty.'
+    })
+    email = serializers.EmailField(error_messages={
+        'required': 'Email address is required.',
+        'invalid': 'Please enter a valid email address.',
+        'blank': 'Email address cannot be empty.'
+    })
+    password = serializers.CharField(write_only=True, error_messages={
+        'required': 'Password is required.',
+        'blank': 'Password cannot be empty.'
+    })
+    phone = serializers.CharField(error_messages={
+        'required': 'Phone number is required.',
+        'blank': 'Phone number cannot be empty.',
+        'invalid': 'Please enter a valid phone number.'
+    })
+    consent_terms = serializers.BooleanField(error_messages={
+        'required': 'You must accept the terms and conditions.',
+        'invalid': 'You must accept the terms and conditions.'
+    })
+    consent_hipaa = serializers.BooleanField(error_messages={
+        'required': 'You must accept the HIPAA acknowledgment.',
+        'invalid': 'You must accept the HIPAA acknowledgment.'
+    })
+    consent_data_processing = serializers.BooleanField(error_messages={
+        'required': 'You must accept the data processing consent.',
+        'invalid': 'You must accept the data processing consent.'
+    })
+
     class Meta:
         model = CustomUser
         fields = [
@@ -20,38 +50,98 @@ class UserSerializer(serializers.ModelSerializer):
             'nin', 'consent_terms', 'consent_hipaa', 'consent_data_processing', 'full_name'
         ]
         extra_kwargs = {
-            'password': {'write_only': True}
+            'password': {'write_only': True},
+            'date_of_birth': {
+                'error_messages': {
+                    'invalid': 'Please enter a valid date in YYYY-MM-DD format.',
+                    'required': 'Date of birth is required.'
+                }
+            },
+            'gender': {
+                'error_messages': {
+                    'invalid': 'Please select a valid gender.',
+                    'required': 'Gender is required.'
+                }
+            },
+            'country': {
+                'error_messages': {
+                    'required': 'Country is required.',
+                    'blank': 'Country cannot be empty.'
+                }
+            }
         }
 
     def validate_nin(self, value):
-        if CustomUser.objects.filter(nin=value).exists():
-            raise serializers.ValidationError("This NIN is already registered. Please provide a unique NIN.")
+        if value:
+            # Remove any spaces or special characters
+            value = ''.join(filter(str.isdigit, value))
+            
+            if CustomUser.objects.filter(nin=value).exists():
+                raise serializers.ValidationError("This NIN is already registered. Please provide a unique NIN.")
+            
+            if len(value) != 11:
+                raise serializers.ValidationError("NIN must be exactly 11 digits long.")
+            
+            if not value.isdigit():
+                raise serializers.ValidationError("NIN must contain only numbers.")
+        return value
+
+    def validate_phone(self, value):
+        # Remove any spaces or special characters
+        value = ''.join(filter(lambda x: x.isdigit() or x in ['+'], value))
+        
+        if not value:
+            raise serializers.ValidationError("Phone number is required.")
+        
+        if not (value.startswith('+') and len(value) >= 10):
+            raise serializers.ValidationError("Please enter a valid phone number with country code (e.g., +234...).")
+        
         return value
 
     def validate(self, data):
-        # Check if the country is Nigeria and NIN is required
-        if data.get('country', '').strip().lower() == 'nigeria':
+        # Validate country-specific requirements
+        country = data.get('country', '').strip().lower()
+        
+        if country == 'nigeria':
             if not data.get('nin'):
                 raise serializers.ValidationError({
                     'nin': "NIN is required for users from Nigeria."
                 })
-            # Optional: Validate NIN format here if needed (e.g., length, digits)
-            if len(data['nin']) != 11 or not data['nin'].isdigit():
+            
+            # NIN validation is handled in validate_nin method
+        
+        # Validate full name
+        full_name = data.get('full_name', '')
+        if len(full_name.split()) < 2:
+            raise serializers.ValidationError({
+                'full_name': "Please provide both first and last name."
+            })
+
+        # Validate date of birth
+        dob = data.get('date_of_birth')
+        if dob:
+            from datetime import date
+            today = date.today()
+            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+            if age < 18:
                 raise serializers.ValidationError({
-                    'nin': "NIN must be an 11-digit number."
+                    'date_of_birth': "You must be at least 18 years old to register."
                 })
+
         return data
 
     def create(self, validated_data):
         # Split full_name into first_name and last_name
         full_name = validated_data.pop('full_name')
-        first_name, last_name = full_name.split(' ', 1) if ' ' in full_name else (full_name, '')
+        name_parts = full_name.split(maxsplit=1)
+        first_name = name_parts[0]
+        last_name = name_parts[1] if len(name_parts) > 1 else ''
 
         # Create user with the validated data
         user = CustomUser.objects.create_user(
-        first_name=first_name,  # Add this! 🌟
-        last_name=last_name,    # And this! 🌟
-        **validated_data
+            first_name=first_name,
+            last_name=last_name,
+            **validated_data
         )
         return user
 

@@ -21,8 +21,11 @@ import logging
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
+from .utils.location_utils import get_location_from_ip
+from django.conf import settings
+from .utils.email import send_verification_email, send_welcome_email
 
-
+# Configure logger
 logger = logging.getLogger(__name__)
 
 # After your imports but before class definitions
@@ -58,28 +61,64 @@ class UserRegistrationView(generics.CreateAPIView):
     permission_classes = [AllowAny]
     serializer_class = UserSerializer
 
-    def perform_create(self, serializer):
-        # Save the user first
-        user = serializer.save()
-        
-        # Generate verification token
-        user.email_verification_token = uuid.uuid4()
-        user.save()
+    def create(self, request, *args, **kwargs):
+        try:
+            # Format the consents data if it's nested
+            if 'consents' in request.data:
+                consents = request.data.pop('consents')
+                request.data['consent_terms'] = consents.get('terms', False)
+                request.data['consent_hipaa'] = consents.get('hipaa', False)
+                request.data['consent_data_processing'] = consents.get('dataProcessing', False)
 
-        # Generate verification link
-        verification_link = f"{os.environ.get('SERVER_API_URL')}api/email/verify/{user.email_verification_token}/"
+            serializer = self.get_serializer(data=request.data)
+            if not serializer.is_valid():
+                # Format validation errors
+                formatted_errors = {}
+                for field, errors in serializer.errors.items():
+                    if isinstance(errors, list):
+                        formatted_errors[field] = errors[0]  # Get the first error message
+                    else:
+                        formatted_errors[field] = errors
 
-        # Use the new send_verification_email function
-        if send_verification_email(user, verification_link):
+                return Response({
+                    'status': 'error',
+                    'message': 'Validation failed',
+                    'errors': formatted_errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Save the user
+            user = serializer.save()
+            
+            # Generate verification token
+            user.email_verification_token = uuid.uuid4()
+            user.save()
+
+            # Generate verification link
+            verification_link = f"{os.environ.get('SERVER_API_URL')}api/email/verify/{user.email_verification_token}/"
+
+            # Send verification email
+            email_sent = send_verification_email(user, verification_link)
+
+            response_data = {
+                'status': 'success',
+                'message': 'Registration successful! Please check your email for verification.',
+                'email': user.email,
+                'email_status': 'sent' if email_sent else 'failed'
+            }
+
+            if not email_sent:
+                response_data['email_error'] = 'Failed to send verification email. Please contact support.'
+
+            return Response(response_data, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            # Log the error for debugging
+            logger.error(f"Registration error: {str(e)}")
             return Response({
-                "message": "Registration successful! Please check your email for verification.",
-                "email": user.email
-            }, status=status.HTTP_201_CREATED)
-        else:
-            return Response({
-                "message": "Registration successful but failed to send verification email. Please try again later.",
-                "email": user.email
-            }, status=status.HTTP_201_CREATED)
+                'status': 'error',
+                'message': 'An unexpected error occurred during registration.',
+                'detail': str(e) if settings.DEBUG else 'Please try again later.'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
@@ -91,26 +130,105 @@ class LoginView(APIView):
         
         user = authenticate(request, username=email, password=password)
         if user is None:
-            return Response({"error": "Invalid credentials"}, status=401)
+            return Response({
+                "status": "error",
+                "message": "Invalid credentials"
+            }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        # Check if email is verified
+        if not user.is_email_verified:
+            # Generate new verification token if needed
+            if not user.email_verification_token:
+                user.email_verification_token = uuid.uuid4()
+                user.save()
+            
+            # Send verification email
+            verification_link = f"{os.environ.get('SERVER_API_URL')}api/email/verify/{user.email_verification_token}/"
+            email_sent = send_verification_email(user, verification_link)
+            
+            return Response({
+                "status": "error",
+                "message": "Email not verified. Please check your email for verification link.",
+                "email_sent": email_sent,
+                "requires_verification": True
+            }, status=status.HTTP_403_FORBIDDEN)
             
         if user.otp_required_for_login:
             otp = user.generate_otp()
-            # Send OTP email
-            send_mail(
-                'Login OTP',
-                f'Your login OTP is: {otp}',
-                'from@yourhealthcare.com',
-                [user.email]
-            )
-            return Response({"message": "OTP sent", "require_otp": True})
             
-        # If OTP not required, proceed with normal login
+            # Get location info from IP
+            ip_address = request.META.get('REMOTE_ADDR', '127.0.0.1')
+            location_info = get_location_from_ip(ip_address)
+            
+            # Get device info
+            device = request.META.get('HTTP_USER_AGENT', 'Unknown Device')
+            
+            # Prepare context for email template
+            context = {
+                'user': user,
+                'otp': otp,
+                'location': f"{location_info.get('city', 'Unknown')}, {location_info.get('country', 'Unknown')}",
+                'device': device,
+                'timestamp': timezone.now().strftime('%b %d %Y %H:%M:%S %Z'),
+                'frontend_url': os.environ.get('NEXTJS_URL').rstrip('/')
+            }
+            
+            # Send OTP email using template
+            html_message = render_to_string('email/otp.html', context)
+            plain_message = strip_tags(html_message)
+            
+            try:
+                send_mail(
+                    subject='PHB Login Verification Code',
+                    message=plain_message,
+                    from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+                    recipient_list=[user.email],
+                    html_message=html_message,
+                    fail_silently=False,
+                )
+                
+                return Response({
+                    "status": "pending",
+                    "message": "OTP sent to your email",
+                    "require_otp": True
+                })
+                
+            except Exception as e:
+                logger.error(f"Failed to send OTP email to {user.email}: {str(e)}")
+                return Response({
+                    "status": "error",
+                    "message": "Failed to send OTP email. Please try again.",
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        # If OTP not required and email is verified, proceed with normal login
         refresh = RefreshToken.for_user(user)
+        
+        # Create user data dictionary
+        user_data = {
+            'id': user.id,
+            'email': user.email,
+            'full_name': f"{user.first_name} {user.last_name}".strip(),
+            'is_verified': user.is_email_verified,
+            'role': user.role,
+            'hpn': user.hpn,
+            'nin': user.nin,
+            'phone': user.phone,
+            'country': user.country,
+            'state': user.state,
+            'city': user.city,
+            'date_of_birth': user.date_of_birth,
+            'gender': user.gender,
+            'has_completed_onboarding': user.has_completed_onboarding
+        }
+        
         return Response({
+            "status": "success",
+            "message": "Login successful",
             "tokens": {
                 "access": str(refresh.access_token),
                 "refresh": str(refresh)
-            }
+            },
+            "user_data": user_data
         })
 
 class UserProfileUpdateView(RetrieveUpdateAPIView):
@@ -254,9 +372,14 @@ class VerifyEmailToken(generics.GenericAPIView):
                     'frontend_url': f"{frontend_url}/"  # Add trailing slash for template
                 })
 
+            # Verify the email
             user.is_email_verified = True
             user.email_verification_token = None
             user.save()
+
+            # Send welcome email
+            welcome_email_sent = send_welcome_email(user)
+            logger.info(f"Welcome email {'sent successfully' if welcome_email_sent else 'failed to send'} for user: {user.email}")
 
             return render(request, 'email/verification_result.html', {
                 'status': 'success',
@@ -274,7 +397,7 @@ class VerifyEmailToken(generics.GenericAPIView):
 class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
     
-    @rate_limit_otp(attempts=5, window=300)  # Fixed! 🛠️
+    @rate_limit_otp(attempts=5, window=300)
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
         if serializer.is_valid():
@@ -286,20 +409,40 @@ class PasswordResetRequestView(APIView):
                 user.password_reset_token = token
                 user.save()
                 
-                # Send email
-               # reset_link = f"{os.environ.get('NEXTJS_URL')}/reset-password?token={token}"
-                reset_link = f"{os.environ.get('NEXTJS_URL')}/auth/reset-password?token={token}"
+                # Get location info from IP
+                ip_address = request.META.get('REMOTE_ADDR', '127.0.0.1')
+                location_info = get_location_from_ip(ip_address)
+                
+                # Get user agent info
+                user_agent = request.META.get('HTTP_USER_AGENT', 'Unknown Device')
+                
+                # Create context with all required information
+                context = {
+                    'reset_link': f"{os.environ.get('NEXTJS_URL')}/auth/reset-password?token={token}",
+                    'user_name': user.first_name or 'there',
+                    'country': location_info.get('country', 'Unknown'),
+                    'city': location_info.get('city', 'Unknown'),
+                    'ip_address': ip_address,
+                    'device': user_agent,
+                    'date': timezone.now().strftime('%b %d %Y %H:%M:%S %Z')
+                }
+                
+                # Send email with context
                 send_mail(
                     'Password Reset Request',
-                    f'Click here to reset your password: {reset_link}',
+                    'Click here to reset your password',
                     os.environ.get('DEFAULT_FROM_EMAIL'),
                     [email],
-                    html_message=render_to_string('email/password_reset.html', {
-                        'reset_link': reset_link,
-                        'user_name': user.first_name
-                    })
+                    html_message=render_to_string('email/reset-password.html', context)
                 )
-                return Response({'message': 'Password reset email sent! 📧'})
+                
+                return Response({
+                    'message': 'Password reset email sent! 📧',
+                    'debug_info': {  # This is for debugging only
+                        'location': location_info,
+                        'ip': ip_address
+                    }
+                })
             except CustomUser.DoesNotExist:
                 # Don't reveal if email exists
                 return Response({'message': 'If this email exists, a reset link will be sent. 📧'})

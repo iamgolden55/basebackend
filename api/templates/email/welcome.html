@@ -1,0 +1,263 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta content="IE=edge" http-equiv="X-UA-Compatible">
+    <meta content="width=device-width, initial-scale=1" name="viewport">
+    <title>Welcome to PHB</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+            background-color: #ECEEF1;
+        }
+        .root-container {
+            background-color: #ECEEF1;
+            padding: 50px 20px;
+        }
+        .container {
+            max-width: 650px;
+            margin: 0 auto;
+            background-color: #ffffff;
+        }
+        .header {
+            background-color: #000000;
+            padding: 30px 0;
+            text-align: center;
+            color: #ffffff;
+        }
+        .logo-text {
+            font-size: 32px;
+            font-weight: 700;
+            color: #ffffff;
+            text-decoration: none;
+            letter-spacing: -1px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .logo-subtext {
+            font-size: 14px;
+            color: #ffffff;
+            margin-top: 4px;
+            letter-spacing: 0.5px;
+        }
+        .content {
+            padding: 40px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #333333;
+            line-height: 1.6;
+        }
+        .welcome-message {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 24px;
+            color: #000000;
+        }
+        .section {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 25px;
+            margin: 25px 0;
+        }
+        .section-title {
+            font-size: 20px;
+            font-weight: bold;
+            color: #000000;
+            margin-bottom: 20px;
+        }
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+        .detail-label {
+            color: #666666;
+            font-weight: 500;
+        }
+        .detail-value {
+            font-weight: 600;
+            color: #000000;
+        }
+        .features-list {
+            margin: 0;
+            padding: 0;
+            list-style: none;
+        }
+        .feature-item {
+            margin: 15px 0;
+            padding-left: 30px;
+            position: relative;
+            font-size: 16px;
+        }
+        .feature-item:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #000000;
+            font-weight: bold;
+        }
+        .cta-button {
+            display: inline-block;
+            padding: 15px 30px;
+            background-color: #000000;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: 600;
+            margin: 30px 0;
+            text-align: center;
+            font-size: 16px;
+        }
+        .security-notice {
+            background-color: #f8f9fa;
+            padding: 25px;
+            margin-top: 40px;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #666666;
+        }
+        .footer {
+            background-color: #f8f9fa;
+            padding: 30px;
+            text-align: center;
+            font-size: 13px;
+            color: #666666;
+            border-top: 1px solid #eeeeee;
+        }
+        .footer-links {
+            margin-top: 15px;
+        }
+        .footer-links a {
+            color: #666666;
+            text-decoration: none;
+            margin: 0 10px;
+            font-size: 12px;
+        }
+        @media only screen and (max-width: 480px) {
+            .content {
+                padding: 20px;
+            }
+            .section {
+                padding: 15px;
+            }
+            .detail-row {
+                flex-direction: column;
+            }
+            .detail-value {
+                margin-top: 5px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="root-container">
+        <div class="container">
+            <div class="header">
+                <div class="logo-text">PHB</div>
+                <div class="logo-subtext">Public Health Bureau</div>
+            </div>
+            
+            <div class="content">
+                <div class="welcome-message">
+                    <h1 style="margin: 0; color: #000000;">Welcome to PHB, {{ user.first_name }}! 🎉</h1>
+                    <p style="font-size: 16px; color: #666666;">Your account has been successfully verified and is ready to use.</p>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">Account Information</div>
+                    <div class="detail-row">
+                        <span class="detail-label">Full Name: </span>
+                        <span class="detail-value"> {{ user.first_name }} {{ user.last_name }}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Healthcare Provider Number (HPN): </span>
+                        <span class="detail-value">{{ user.hpn }}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Email Address: </span>
+                        <span class="detail-value">{{ user.email }}</span>
+                    </div>
+                    {% if user.phone %}
+                    <div class="detail-row">
+                        <span class="detail-label">Phone Number: </span>
+                        <span class="detail-value">{{ user.phone }}</span>
+                    </div>
+                    {% endif %}
+                    <div class="detail-row">
+                        <span class="detail-label">Location: </span>
+                        <span class="detail-value">{{ user.city }}, {{ user.state }}, {{ user.country }}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Account Created: </span>
+                        <span class="detail-value">{{ user.date_joined|date:"F j, Y" }}</span>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">PHB Features & Services</div>
+                    <ul class="features-list">
+                        <li class="feature-item">Secure access to comprehensive health records</li>
+                        <li class="feature-item">Real-time appointment scheduling with healthcare providers</li>
+                        <li class="feature-item">Instant health notifications and alerts</li>
+                        <li class="feature-item">Direct connection with healthcare facilities</li>
+                        <li class="feature-item">Complete medical history tracking and management</li>
+                        <li class="feature-item">Secure messaging with healthcare providers</li>
+                        <li class="feature-item">Digital health document management</li>
+                    </ul>
+                </div>
+
+                <div style="text-align: center;">
+                    <a href="{{ frontend_url }}/dashboard" class="cta-button">
+                        Access Your Dashboard
+                    </a>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">Getting Started</div>
+                    <ol style="margin: 0; padding-left: 20px;">
+                        <li style="margin-bottom: 10px;">Complete your profile information</li>
+                        <li style="margin-bottom: 10px;">Set up your privacy preferences</li>
+                        <li style="margin-bottom: 10px;">Connect with your healthcare providers</li>
+                        <li style="margin-bottom: 10px;">Upload any existing health records</li>
+                        <li>Explore the PHB dashboard features</li>
+                    </ol>
+                </div>
+
+                <div class="security-notice">
+                    <strong>Security Notice:</strong>
+                    <p style="margin-top: 10px;">Your PHB account is protected by industry-standard security measures. We recommend:</p>
+                    <ul style="margin: 10px 0; padding-left: 20px;">
+                        <li>Using a strong, unique password</li>
+                        <li>Enabling two-factor authentication</li>
+                        <li>Keeping your contact information up to date</li>
+                        <li>Never sharing your login credentials</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="footer">
+                <p style="margin-bottom: 15px;">Need assistance? Our support team is available 24/7.</p>
+                <p style="margin-bottom: 15px;">Contact us at: <a href="mailto:support@phb.com" style="color: #000000;">support@phb.com</a></p>
+                <p style="color: #999999; font-size: 12px; margin-bottom: 15px;">This is an automated message. Please do not reply to this email.</p>
+                <p style="margin-bottom: 15px;">© {% now "Y" %} Public Health Bureau. All rights reserved.</p>
+                <div class="footer-links">
+                    <a href="{{ frontend_url }}/privacy">Privacy Policy</a>
+                    <a href="{{ frontend_url }}/terms">Terms of Service</a>
+                    <a href="{{ frontend_url }}/help">Help Center</a>
+                    <a href="{{ frontend_url }}/contact">Contact Us</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+{% endblock %} 

@@ -16,6 +16,9 @@ from .medical.hospital_registration import HospitalRegistration
 from .medical_staff.doctor import Doctor
 from .medical_staff.general_practitioner import GeneralPractitioner
 
+# Import signals
+from . import signals
+
 __all__ = [
     'CustomUser',
     'CustomUserManager',
