@@ -1,0 +1,95 @@
+{% extends "email/base_email.html" %}
+
+{% block title %}Pre-appointment Instructions - {{ appointment_id }}{% endblock %}
+
+{% block content %}
+<tr>
+    <td class="content-cell">
+        <div class="f-fallback">
+            <h1>Hello {{ patient_name }},</h1>
+            <p>Here are important instructions for your upcoming appointment:</p>
+            
+            <table class="attributes" width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                <tr>
+                    <td class="attributes_content">
+                        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Appointment:</strong> {{ appointment_id }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Date & Time:</strong> {{ appointment_date|date:"l, F j, Y" }} at {{ appointment_date|time:"g:i A" }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Doctor:</strong> {{ doctor_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Department:</strong> {{ department_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Location:</strong> {{ hospital_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+
+            <p>Before Your Appointment:</p>
+            <ul>
+                <li>Fast for 8 hours before the appointment (water is allowed)</li>
+                <li>Take your regular medications unless instructed otherwise</li>
+                <li>Wear comfortable, loose-fitting clothing</li>
+                <li>Arrive 15 minutes early to complete any necessary paperwork</li>
+            </ul>
+
+            <p>Please Bring:</p>
+            <ul>
+                <li>Valid ID and appointment confirmation</li>
+                <li>Current list of medications</li>
+                <li>Recent medical records and test results</li>
+                {% if not is_insurance_based %}
+                <li>Insurance card and any required co-payment</li>
+                {% endif %}
+                <li>Any relevant imaging or lab results</li>
+            </ul>
+
+            <div style="background-color: #f3f3f3; padding: 15px; margin: 20px 0;">
+                <p style="font-weight: bold;">Special Instructions:</p>
+                <ul>
+                    <li>If you're feeling unwell, please contact us before your visit</li>
+                    <li>If you need to cancel, please do so at least 24 hours in advance</li>
+                    <li>If you have mobility issues, please let us know in advance</li>
+                </ul>
+            </div>
+
+            <p>Questions or Concerns?</p>
+            <ul>
+                <li>Call our appointment desk</li>
+                <li>Message us through the patient portal</li>
+                <li>Reply to this email</li>
+            </ul>
+            
+            <p>We look forward to seeing you!</p>
+        </div>
+    </td>
+</tr>
+{% endblock %} 

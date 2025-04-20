@@ -1,0 +1,78 @@
+{% extends "email/base_email.html" %}
+
+{% block title %}Follow-up Appointment Reminder - {{ appointment_id }}{% endblock %}
+
+{% block content %}
+<tr>
+    <td class="content-cell">
+        <div class="f-fallback">
+            <h1>Hello {{ patient_name }},</h1>
+            <p>This is a reminder to schedule your follow-up appointment with {{ doctor_name }}.</p>
+            
+            <table class="attributes" width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                <tr>
+                    <td class="attributes_content">
+                        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Previous Appointment:</strong> {{ appointment_id }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Doctor:</strong> {{ doctor_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Department:</strong> {{ department_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Hospital:</strong> {{ hospital_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+
+            <p>Why Follow-up is Important:</p>
+            <ul>
+                <li>Monitor your progress and recovery</li>
+                <li>Adjust treatment plans if needed</li>
+                <li>Address any new concerns or symptoms</li>
+                <li>Ensure the best possible health outcomes</li>
+            </ul>
+
+            <p>To Schedule Your Follow-up:</p>
+            <ul>
+                <li>Visit our website to book online</li>
+                <li>Call our appointment desk</li>
+                <li>Reply to this email and we'll contact you</li>
+            </ul>
+
+            <p>For Your Follow-up Visit:</p>
+            <ul>
+                <li>Bring an updated list of any medications you're taking</li>
+                <li>Note any symptoms or concerns you've experienced</li>
+                <li>Bring any new test results or medical records</li>
+                {% if not is_insurance_based %}
+                <li>Check your insurance coverage if needed</li>
+                {% endif %}
+            </ul>
+            
+            <p>Your health is our priority. Don't forget to schedule your follow-up appointment!</p>
+        </div>
+    </td>
+</tr>
+{% endblock %} 

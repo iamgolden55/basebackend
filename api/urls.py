@@ -1,4 +1,5 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 from api.views import UserProfileUpdateView, PasswordResetRequestView, PasswordResetConfirmView, UpdateOnboardingStatusView
 from api.views import (
     HospitalRegistrationViewSet,
@@ -7,10 +8,24 @@ from api.views import (
     ApproveHospitalRegistrationView,
     HospitalAdminRegistrationView,
     hospital_list,
-    pending_registrations,
     approve_registration,
-    hospital_registration
+    HospitalLocationViewSet,
+    hospital_registration,
+    AppointmentViewSet,
+    has_primary_hospital
 )
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+
+
+router = DefaultRouter()
+router.register(r'hospitals', HospitalLocationViewSet, basename='hospital')
+router.register(r'appointments', AppointmentViewSet, basename='appointment')
+
+@api_view(['GET'])
+def health_check(request):
+    return Response({"status": "healthy"})
 
 urlpatterns = [
     path('profile/', UserProfileUpdateView.as_view(), name='profile-update'),
@@ -37,7 +52,27 @@ urlpatterns = [
          HospitalAdminRegistrationView.as_view(), 
          name='hospital-admin-register'),
     path('hospitals/', hospital_list, name='hospital-list'),
-    path('hospitals/pending/', pending_registrations, name='pending-registrations'),
-    path('hospitals/approve/<int:registration_id>/', approve_registration, name='approve-registration'),
-    
+    path('hospitals/pending/<int:registration_id>/', approve_registration, name='approve-registration'),
+    path('user/has-primary-hospital/', has_primary_hospital, name='has-primary-hospital'),
+    path('', include(router.urls)),
+    path('health-check/', health_check, name='health-check'),
 ]
+
+# Available endpoints:
+# GET /api/hospitals/nearby/?latitude=<lat>&longitude=<lng>&radius=<km>
+# POST /api/hospitals/<id>/register/
+# POST /api/hospitals/<id>/set-primary/
+
+# Appointment endpoints:
+# GET /api/appointments/ - List all appointments for the current user
+# POST /api/appointments/ - Create a new appointment
+# GET /api/appointments/<id>/ - Get details of a specific appointment
+# PUT/PATCH /api/appointments/<id>/ - Update an appointment
+# DELETE /api/appointments/<id>/ - Delete an appointment
+# POST /api/appointments/<id>/cancel/ - Cancel an appointment
+# POST /api/appointments/<id>/reschedule/ - Reschedule an appointment
+# POST /api/appointments/<id>/approve/ - Approve an appointment
+# POST /api/appointments/<id>/refer/ - Refer an appointment to another hospital
+# POST /api/appointments/<id>/complete/ - Mark an appointment as completed
+# GET /api/appointments/upcoming/ - Get upcoming appointments
+# GET /api/appointments/today/ - Get today's appointments

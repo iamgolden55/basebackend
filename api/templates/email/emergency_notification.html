@@ -1,0 +1,65 @@
+{% extends "email/base_email.html" %}
+
+{% block title %}URGENT: Important Medical Information - {{ appointment_id }}{% endblock %}
+
+{% block content %}
+<tr>
+    <td class="content-cell">
+        <div class="f-fallback">
+            <h1 style="color: #cc0000;">⚠️ URGENT: Medical Attention Required</h1>
+            <p>Hello {{ patient_name }},</p>
+            <p>This is an urgent notification regarding your recent appointment.</p>
+            
+            <table class="attributes" width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                <tr>
+                    <td class="attributes_content">
+                        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Related Appointment:</strong> {{ appointment_id }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Doctor:</strong> {{ doctor_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Hospital:</strong> {{ hospital_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+
+            <div style="background-color: #fff3f3; padding: 15px; border-left: 4px solid #cc0000; margin: 20px 0;">
+                <p style="color: #cc0000; font-weight: bold;">Required Immediate Actions:</p>
+                <ul>
+                    <li>Contact our emergency line immediately: [EMERGENCY_CONTACT]</li>
+                    <li>Have your appointment ID ready when calling</li>
+                    <li>Follow any specific instructions provided by your healthcare provider</li>
+                </ul>
+            </div>
+
+            <p>Important Notes:</p>
+            <ul>
+                <li>This is a time-sensitive matter requiring your immediate attention</li>
+                <li>If you cannot reach us, please visit the nearest emergency room</li>
+                <li>Bring this notification and any recent medical records with you</li>
+            </ul>
+
+            <p style="font-weight: bold;">If you have already taken action regarding this notification, please disregard this message.</p>
+            
+            <p>Your health and safety are our top priority.</p>
+        </div>
+    </td>
+</tr>
+{% endblock %} 

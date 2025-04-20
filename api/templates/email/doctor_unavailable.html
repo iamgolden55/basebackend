@@ -1,0 +1,71 @@
+{% extends "email/base_email.html" %}
+
+{% block title %}Doctor Unavailable - {{ appointment_id }}{% endblock %}
+
+{% block content %}
+<tr>
+    <td class="content-cell">
+        <div class="f-fallback">
+            <h1>Hello {{ patient_name }},</h1>
+            <p>We regret to inform you that {{ doctor_name }} is unavailable for your scheduled appointment.</p>
+            
+            <table class="attributes" width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                <tr>
+                    <td class="attributes_content">
+                        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Affected Appointment:</strong> {{ appointment_id }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Originally Scheduled For:</strong> {{ appointment_date|date:"l, F j, Y" }} at {{ appointment_date|time:"g:i A" }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Department:</strong> {{ department_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Hospital:</strong> {{ hospital_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+
+            <p>You have the following options:</p>
+            <ul>
+                <li>Reschedule with the same doctor for a different date</li>
+                <li>Book with another available doctor in the same department</li>
+                <li>Cancel the appointment and receive a full refund {% if not is_insurance_based %}of any payments made{% endif %}</li>
+            </ul>
+
+            <p>Please contact us to let us know your preference. We can assist you in:</p>
+            <ul>
+                <li>Finding the next available slot with {{ doctor_name }}</li>
+                <li>Suggesting alternative doctors with similar expertise</li>
+                <li>Processing your refund if you choose to cancel</li>
+            </ul>
+
+            {% if payment_status == 'completed' %}
+            <p>If you choose to cancel, any payments made will be fully refunded.</p>
+            {% endif %}
+            
+            <p>We sincerely apologize for any inconvenience caused and appreciate your understanding.</p>
+        </div>
+    </td>
+</tr>
+{% endblock %} 

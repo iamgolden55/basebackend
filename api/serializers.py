@@ -9,6 +9,10 @@ from .tokens import HospitalAdminToken
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from api.models import Appointment, Doctor, AppointmentFee
+from datetime import datetime, timedelta
+from django.utils import timezone
+
 CustomUser = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
@@ -42,12 +46,33 @@ class UserSerializer(serializers.ModelSerializer):
         'required': 'You must accept the data processing consent.',
         'invalid': 'You must accept the data processing consent.'
     })
+    preferred_language = serializers.CharField(error_messages={
+        'invalid_choice': 'Please select a valid language.',
+        'required': 'Preferred language is required.'
+    })
+    secondary_languages = serializers.ListField(
+        child=serializers.CharField(error_messages={
+            'invalid_choice': 'Please enter a valid language.',
+            'required': 'Secondary language is required.'
+        }),
+        error_messages={
+            'required': 'Secondary languages are required.'
+        }
+    )
+    custom_language = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        error_messages={
+            'invalid': 'Please enter a valid language name.'
+        }
+    )
 
     class Meta:
         model = CustomUser
         fields = [
             'email', 'password', 'date_of_birth', 'gender', 'country', 'city', 'phone', 'state',
-            'nin', 'consent_terms', 'consent_hipaa', 'consent_data_processing', 'full_name'
+            'nin', 'consent_terms', 'consent_hipaa', 'consent_data_processing', 'full_name',
+            'preferred_language', 'secondary_languages', 'custom_language'
         ]
         extra_kwargs = {
             'password': {'write_only': True},
@@ -67,6 +92,12 @@ class UserSerializer(serializers.ModelSerializer):
                 'error_messages': {
                     'required': 'Country is required.',
                     'blank': 'Country cannot be empty.'
+                }
+            },
+            'preferred_language': {
+                'error_messages': {
+                    'invalid_choice': 'Please select a valid language.',
+                    'required': 'Preferred language is required.'
                 }
             }
         }
@@ -128,6 +159,12 @@ class UserSerializer(serializers.ModelSerializer):
                     'date_of_birth': "You must be at least 18 years old to register."
                 })
 
+        # Validate custom language when "other" is selected
+        if data.get('preferred_language') == 'other' and not data.get('custom_language'):
+            raise serializers.ValidationError({
+                'custom_language': "Please specify your preferred language."
+            })
+
         return data
 
     def create(self, validated_data):
@@ -161,13 +198,35 @@ class UserProfileSerializer(serializers.ModelSerializer):
     )
     hpn = serializers.CharField(read_only=True)
     nin = serializers.CharField(read_only=True)
+    preferred_language = serializers.CharField(error_messages={
+        'invalid_choice': 'Please select a valid language.',
+        'required': 'Preferred language is required.'
+    })
+    secondary_languages = serializers.ListField(
+        child=serializers.CharField(error_messages={
+            'invalid_choice': 'Please enter a valid language.',
+            'required': 'Secondary language is required.'
+        }),
+        error_messages={
+            'required': 'Secondary languages are required.'
+        }
+    )
+    custom_language = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        error_messages={
+            'invalid': 'Please enter a valid language name.'
+        }
+    )
+
     class Meta:
         model = CustomUser
         fields = [
             'full_name',
             'email',
             'phone', 'country', 
-            'state', 'city', 'hpn', 'nin', 'date_of_birth', 'gender'
+            'state', 'city', 'hpn', 'nin', 'date_of_birth', 'gender',
+            'preferred_language', 'secondary_languages', 'custom_language'
         ]
     
     def get_full_name(self, obj):
@@ -193,7 +252,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'city': user.city,
             'date_of_birth': user.date_of_birth,
             'gender': user.gender,
-            'has_completed_onboarding': user.has_completed_onboarding
+            'has_completed_onboarding': user.has_completed_onboarding,
+            'preferred_language': user.preferred_language,
+            'secondary_languages': user.secondary_languages,
+            'custom_language': user.custom_language
         }
         
         # Add user_data to the response
@@ -269,9 +331,240 @@ class HospitalAdminRegistrationSerializer(serializers.ModelSerializer):
         fields = ['email', 'name', 'hospital', 'position', 'password']
         
     def create(self, validated_data):
-        password = validated_data.pop('password')
-        admin = HospitalAdmin.objects.create_hospital_admin(
-            password=password,
-            **validated_data
+        # Create the HospitalAdmin instance directly
+        admin = HospitalAdmin(
+            email=validated_data['email'],
+            name=validated_data['name'],
+            hospital=validated_data['hospital'],
+            position=validated_data['position'],
+            password=validated_data['password']
         )
-        return admin          
+        admin.save()  # This will trigger the save method that creates the CustomUser
+        return admin
+
+class HospitalLocationSerializer(serializers.ModelSerializer):
+    distance = serializers.SerializerMethodField()
+    distance_km = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Hospital
+        fields = [
+            'id', 'name', 'hospital_type', 'address', 
+            'city', 'state', 'country', 'postal_code',
+            'latitude', 'longitude', 'distance', 'distance_km',
+            'emergency_unit', 'icu_unit', 'is_verified',
+            'phone', 'email', 'website'
+        ]
+
+    def get_distance(self, obj):
+        """Returns the distance in meters"""
+        if hasattr(obj, 'distance'):
+            return round(obj.distance * 1000, 2)  # Convert km to meters
+        return None
+
+    def get_distance_km(self, obj):
+        """Returns the distance in kilometers"""
+        if hasattr(obj, 'distance'):
+            return round(obj.distance, 2)
+        return None
+
+class NearbyHospitalSerializer(HospitalLocationSerializer):
+    registration_status = serializers.SerializerMethodField()
+    is_primary = serializers.SerializerMethodField()
+    
+    class Meta(HospitalLocationSerializer.Meta):
+        fields = HospitalLocationSerializer.Meta.fields + ['registration_status', 'is_primary']
+        
+    def get_registration_status(self, obj):
+        """Check if the current user is registered with this hospital"""
+        user = self.context.get('request').user
+        if user.is_authenticated:
+            registration = obj.hospitalregistration_set.filter(user=user).first()
+            if registration:
+                return {
+                    'status': registration.status,
+                    'is_approved': registration.status == 'approved',
+                    'registration_date': registration.created_at
+                }
+        return None
+        
+    def get_is_primary(self, obj):
+        """Check if this is the user's primary hospital"""
+        user = self.context.get('request').user
+        if user.is_authenticated:
+            registration = obj.hospitalregistration_set.filter(
+                user=user,
+                is_primary=True,
+                status='approved'
+            ).exists()
+            return registration
+        return False          
+    
+class DoctorSerializer(serializers.ModelSerializer):
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+    
+    class Meta:
+        model = Doctor
+        fields = ['id', 'first_name', 'last_name', 'specialization', 'hospital']
+
+class AppointmentSerializer(serializers.ModelSerializer):
+    doctor = DoctorSerializer(read_only=True)
+    doctor_id = serializers.PrimaryKeyRelatedField(
+        queryset=Doctor.objects.all(),
+        source='doctor',
+        write_only=True,
+        required=False
+    )
+    hospital_name = serializers.SerializerMethodField(read_only=True)
+    department_name = serializers.SerializerMethodField(read_only=True)
+    patient_name = serializers.SerializerMethodField(read_only=True)
+    status_display = serializers.SerializerMethodField(read_only=True)
+    fee_id = serializers.PrimaryKeyRelatedField(
+        queryset=AppointmentFee.objects.all(),
+        source='fee',
+        write_only=True,
+        required=True
+    )
+    
+    class Meta:
+        model = Appointment
+        fields = [
+            'id', 
+            'appointment_id',
+            'doctor', 
+            'doctor_id',
+            'patient',
+            'patient_name',
+            'hospital',
+            'hospital_name',
+            'department',
+            'department_name',
+            'appointment_date',
+            'duration',
+            'appointment_type',
+            'priority',
+            'status',
+            'status_display',
+            'chief_complaint',
+            'symptoms',
+            'medical_history',
+            'allergies',
+            'current_medications',
+            'is_insurance_based',
+            'insurance_details',
+            'payment_status',
+            'notes',
+            'cancellation_reason',
+            'created_at',
+            'updated_at',
+            'fee',
+            'fee_id'
+        ]
+        read_only_fields = ['patient', 'appointment_id', 'created_at', 'updated_at']
+    
+    def get_hospital_name(self, obj):
+        return obj.hospital.name if obj.hospital else None
+    
+    def get_department_name(self, obj):
+        return obj.department.name if obj.department else None
+    
+    def get_patient_name(self, obj):
+        if obj.patient:
+            return f"{obj.patient.first_name} {obj.patient.last_name}"
+        return None
+    
+    def get_status_display(self, obj):
+        return dict(Appointment.STATUS_CHOICES).get(obj.status, obj.status)
+    
+    def validate(self, data):
+        """
+        Validate appointment data
+        """
+        # Get appointment date from data
+        appointment_date = data.get('appointment_date')
+        
+        # Check if appointment date is in the past
+        if appointment_date and appointment_date < timezone.now():
+            raise serializers.ValidationError("Cannot create appointments in the past.")
+        
+        # Check if doctor is available at the requested time
+        doctor = data.get('doctor')
+        if doctor and appointment_date:
+            # Get appointment duration (default to 30 minutes if not provided)
+            duration = data.get('duration', 30)
+            
+            # Calculate appointment end time
+            appointment_end = appointment_date + timedelta(minutes=duration)
+            
+            # Check for overlapping appointments
+            overlapping_appointments = Appointment.objects.filter(
+                doctor=doctor,
+                status__in=['pending', 'confirmed', 'in_progress'],
+                appointment_date__date=appointment_date.date(),  # Only check appointments on the same day
+                appointment_date__gte=appointment_date,  # Start time is after or at the requested time
+                appointment_date__lt=appointment_end  # Start time is before the end of the requested slot
+            ).exclude(id=self.instance.id if self.instance else None)
+            
+            if overlapping_appointments.exists():
+                raise serializers.ValidationError(
+                    "Doctor is not available at the requested time. Please choose another time."
+                )
+        
+        return data
+
+class AppointmentListSerializer(serializers.ModelSerializer):
+    doctor = DoctorSerializer(read_only=True)
+    status_display = serializers.SerializerMethodField()
+    hospital_name = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Appointment
+        fields = [
+            'id',
+            'appointment_id',
+            'doctor',
+            'hospital',
+            'hospital_name',
+            'department',
+            'department_name',
+            'appointment_date',
+            'duration',
+            'appointment_type',
+            'priority',
+            'status',
+            'status_display',
+            'chief_complaint',
+            'created_at'
+        ]
+    
+    def get_status_display(self, obj):
+        return dict(Appointment.STATUS_CHOICES).get(obj.status, obj.status)
+    
+    def get_hospital_name(self, obj):
+        return obj.hospital.name if obj.hospital else None
+    
+    def get_department_name(self, obj):
+        return obj.department.name if obj.department else None
+
+class AppointmentCancelSerializer(serializers.Serializer):
+    cancellation_reason = serializers.CharField(required=True)
+
+class AppointmentRescheduleSerializer(serializers.Serializer):
+    new_appointment_date = serializers.DateTimeField(required=True)
+    
+    def validate_new_appointment_date(self, value):
+        if value < timezone.now():
+            raise serializers.ValidationError("New appointment date cannot be in the past.")
+        return value
+
+class AppointmentApproveSerializer(serializers.Serializer):
+    approval_notes = serializers.CharField(required=False, allow_blank=True)
+
+class AppointmentReferSerializer(serializers.Serializer):
+    referred_to_hospital = serializers.PrimaryKeyRelatedField(
+        queryset=Hospital.objects.all(),
+        required=True
+    )
+    referral_reason = serializers.CharField(required=True)     

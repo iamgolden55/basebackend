@@ -1,0 +1,65 @@
+{% extends "email/base_email.html" %}
+
+{% block title %}Appointment Reminder - {{ appointment_id }}{% endblock %}
+
+{% block content %}
+<tr>
+    <td class="content-cell">
+        <div class="f-fallback">
+            <h1>Hello {{ patient_name }}!</h1>
+            <p>This is a reminder for your upcoming appointment:</p>
+            
+            <table class="attributes" width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                <tr>
+                    <td class="attributes_content">
+                        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Date & Time:</strong> {{ appointment_date|date:"l, F j, Y" }} at {{ appointment_date|time:"g:i A" }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Doctor:</strong> {{ doctor_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Department:</strong> {{ department_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Hospital:</strong> {{ hospital_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+
+            <p>Please remember:</p>
+            <ul>
+                <li>Arrive 15 minutes before your appointment time</li>
+                <li>Bring any relevant medical records or test results</li>
+                <li>Bring a valid ID and your insurance card (if applicable)</li>
+                {% if not is_insurance_based and payment_status == 'pending' %}
+                <li>Complete your payment before the appointment</li>
+                {% endif %}
+            </ul>
+
+            <p>If you need to cancel or reschedule, please do so at least 24 hours in advance.</p>
+            
+            <p>We look forward to seeing you!</p>
+        </div>
+    </td>
+</tr>
+{% endblock %} 

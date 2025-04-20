@@ -1,0 +1,124 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<div class="email-container">
+    <div class="header">
+        <h1>Appointment Confirmation 🏥</h1>
+    </div>
+
+    <div class="content">
+        <p>Hello {{ patient_name }},</p>
+        
+        <p>Your appointment has been successfully scheduled! Here are the details:</p>
+        
+        <div class="appointment-details">
+            <div class="detail-row">
+                <span class="label">Doctor:</span>
+                <span class="value">{{ doctor_name }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Date:</span>
+                <span class="value">{{ appointment_date }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Time:</span>
+                <span class="value">{{ appointment_time }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Location:</span>
+                <span class="value">{{ hospital_name }}</span>
+            </div>
+        </div>
+
+        <div class="important-notes">
+            <h3>Important Notes 📝</h3>
+            <ul>
+                <li>Please arrive 15 minutes before your appointment time</li>
+                <li>Bring any relevant medical records or test results</li>
+                <li>If you need to cancel or reschedule, please do so at least 24 hours in advance</li>
+                <li>Wear a face mask during your visit</li>
+            </ul>
+        </div>
+
+        <div class="reminder">
+            <p>You will receive a reminder 24 hours before your appointment. ⏰</p>
+        </div>
+
+        <div class="footer-note">
+            <p>If you have any questions or need to make changes to your appointment, please contact us or log into your account.</p>
+            <p>We look forward to seeing you! 👋</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .email-container {
+        max-width: 600px;
+        margin: 0 auto;
+        font-family: Arial, sans-serif;
+    }
+    
+    .header {
+        background-color: #4CAF50;
+        color: white;
+        padding: 20px;
+        text-align: center;
+        border-radius: 5px 5px 0 0;
+    }
+    
+    .content {
+        padding: 20px;
+        background-color: #ffffff;
+        border-radius: 0 0 5px 5px;
+    }
+    
+    .appointment-details {
+        background-color: #f9f9f9;
+        padding: 20px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+    
+    .detail-row {
+        margin: 10px 0;
+        display: flex;
+        justify-content: space-between;
+    }
+    
+    .label {
+        font-weight: bold;
+        color: #666;
+    }
+    
+    .value {
+        color: #333;
+    }
+    
+    .important-notes {
+        background-color: #fff3cd;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+    
+    .important-notes ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+    
+    .reminder {
+        background-color: #d4edda;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+        text-align: center;
+    }
+    
+    .footer-note {
+        border-top: 1px solid #eee;
+        margin-top: 20px;
+        padding-top: 20px;
+        color: #666;
+    }
+</style>
+{% endblock %} 

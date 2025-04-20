@@ -2,8 +2,16 @@ from django.db import models
 from django.utils import timezone
 
 class HospitalRegistration(models.Model):
-    user = models.ForeignKey('CustomUser', on_delete=models.CASCADE)
-    hospital = models.ForeignKey('Hospital', on_delete=models.CASCADE)
+    user = models.ForeignKey(
+        'api.CustomUser',
+        on_delete=models.CASCADE,
+        related_name='hospital_registrations'
+    )
+    hospital = models.ForeignKey(
+        'api.Hospital',
+        on_delete=models.CASCADE,
+        related_name='registrations'
+    )
     status = models.CharField(
         max_length=20,
         choices=[

@@ -1,14 +1,23 @@
 # Description: This file contains the views for user registration, login, email verification, and email verification token verification.
 import os
 from django.shortcuts import render, get_object_or_404
-from api.models import CustomUser, HospitalRegistration, Hospital
-from rest_framework import generics, status, viewsets
+from api.models import CustomUser, HospitalRegistration, Hospital, Appointment, Doctor
+from api.models.medical.appointment_notification import AppointmentNotification
+from rest_framework import generics, status, viewsets, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
-from .serializers import UserSerializer, CustomTokenObtainPairSerializer, EmailVerificationSerializer, UserProfileSerializer, PasswordResetRequestSerializer, PasswordResetConfirmSerializer, OnboardingStatusSerializer, HospitalRegistrationSerializer, HospitalAdminRegistrationSerializer, HospitalSerializer
+from .serializers import ( 
+    UserSerializer, CustomTokenObtainPairSerializer, 
+    EmailVerificationSerializer, UserProfileSerializer, 
+    PasswordResetRequestSerializer, PasswordResetConfirmSerializer, 
+    OnboardingStatusSerializer, HospitalRegistrationSerializer, 
+    HospitalAdminRegistrationSerializer, HospitalSerializer, 
+    HospitalLocationSerializer, NearbyHospitalSerializer,
+    AppointmentSerializer, AppointmentListSerializer
+)
 from django.contrib.auth import authenticate
 from django.core.mail import send_mail
 from django.core.cache import cache
@@ -18,15 +27,22 @@ from .utilis import rate_limit_otp
 from django.utils.html import strip_tags 
 import uuid, secrets
 import logging
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view, permission_classes, action
 from django.utils import timezone
 from .utils.location_utils import get_location_from_ip
 from django.conf import settings
 from .utils.email import send_verification_email, send_welcome_email
+from api.models.medical.doctor_assignment import doctor_assigner
+from rest_framework.exceptions import ValidationError
+from datetime import datetime, timedelta
+from django.utils.dateparse import parse_date
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db.models import Q
+from django_filters.rest_framework import DjangoFilterBackend
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
 
 # After your imports but before class definitions
 def send_verification_email(user, verification_link):
@@ -125,10 +141,46 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
 class LoginView(APIView):
     def post(self, request):
+        # Add debugging logs
+        print(f"Login attempt with data: {request.data}")
+        print(f"Content-Type: {request.content_type}")
+        
         email = request.data.get('email')
         password = request.data.get('password')
         
-        user = authenticate(request, username=email, password=password)
+        print(f"Extracted email: {email}, password: {'*' * len(password) if password else None}")
+        
+        if not email or not password:
+            return Response({
+                "status": "error",
+                "message": "Email and password are required"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if user exists first
+        try:
+            user_exists = CustomUser.objects.filter(email=email).exists()
+            print(f"User exists check: {user_exists}")
+            if not user_exists:
+                return Response({
+                    "status": "error",
+                    "message": "Invalid credentials"
+                }, status=status.HTTP_401_UNAUTHORIZED)
+        except Exception as e:
+            print(f"Error checking user existence: {str(e)}")
+            return Response({
+                "status": "error",
+                "message": "An error occurred during authentication"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # Try authentication with email parameter explicitly
+        user = authenticate(request, email=email, password=password)
+        print(f"Authentication result: {user}")
+        
+        # If that fails, try with username parameter (for backward compatibility)
+        if user is None:
+            user = authenticate(request, username=email, password=password)
+            print(f"Second authentication attempt result: {user}")
+        
         if user is None:
             return Response({
                 "status": "error",
@@ -617,36 +669,454 @@ class HospitalAdminRegistrationView(generics.CreateAPIView):
                     "position": admin.position
                 }
             }, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)    
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class AppointmentViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing appointments 🏥
+    
+    This ViewSet provides comprehensive functionality for managing medical appointments,
+    including creating, retrieving, updating, and deleting appointments, as well as
+    specialized actions like cancellation, rescheduling, approval, and referral.
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = AppointmentSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter, DjangoFilterBackend]
+    search_fields = ['doctor__first_name', 'doctor__last_name', 'chief_complaint', 'status']
+    ordering_fields = ['appointment_date', 'created_at', 'priority']
+    ordering = ['-appointment_date']
+    filterset_fields = ['status', 'appointment_type', 'priority', 'hospital', 'department']
+
+    def get_queryset(self):
+        """
+        Filter appointments based on user role and query parameters
+        """
+        user = self.request.user
+        
+        # Base queryset with select_related for better performance
+        base_qs = Appointment.objects.select_related(
+            'doctor', 'doctor__user', 'hospital', 'department'
+        )
+        
+        # Filter based on user role
+        if hasattr(user, 'doctor_profile'):
+            queryset = base_qs.filter(doctor=user.doctor_profile)
+        elif hasattr(user, 'hospital_admin'):
+            queryset = base_qs.filter(hospital=user.hospital_admin.hospital)
+        else:
+            queryset = base_qs.filter(patient=user)
+        
+        # Apply date filters if provided
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+        
+        try:
+            if start_date:
+                start_date = timezone.make_aware(
+                    datetime.strptime(start_date, '%Y-%m-%d')
+                )
+                queryset = queryset.filter(appointment_date__gte=start_date)
+            
+            if end_date:
+                end_date = timezone.make_aware(
+                    datetime.strptime(end_date, '%Y-%m-%d')
+                ).replace(hour=23, minute=59, second=59)
+                queryset = queryset.filter(appointment_date__lte=end_date)
+                
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid date format in query params: {e}")
+        
+        # Filter by upcoming appointments if requested
+        upcoming = self.request.query_params.get('upcoming')
+        if upcoming and upcoming.lower() == 'true':
+            queryset = queryset.filter(
+                appointment_date__gte=timezone.now(),
+                status__in=['pending', 'confirmed', 'rescheduled']
+            )
+        
+        return queryset
+
+    def get_serializer_class(self):
+        """
+        Use different serializers based on the action
+        """
+        if self.action == 'list':
+            return AppointmentListSerializer
+        elif self.action == 'cancel':
+            return AppointmentCancelSerializer
+        elif self.action == 'reschedule':
+            return AppointmentRescheduleSerializer
+        elif self.action == 'approve':
+            return AppointmentApproveSerializer
+        elif self.action == 'refer':
+            return AppointmentReferSerializer
+        return AppointmentSerializer
+
+    def perform_create(self, serializer):
+        """
+        Set the patient to the current user when creating an appointment
+        """
+        # Validate appointment date is not in the past
+        appointment_date = serializer.validated_data.get('appointment_date')
+        if appointment_date and appointment_date < timezone.now():
+            raise ValidationError("Cannot create appointments in the past.")
+        
+        # Check if doctor_id is provided
+        doctor = serializer.validated_data.get('doctor')
+        
+        if not doctor:
+            # Prepare appointment data for ML assignment
+            appointment_data = {
+                'patient': self.request.user,
+                'department': serializer.validated_data.get('department'),
+                'hospital': serializer.validated_data.get('hospital'),
+                'appointment_type': serializer.validated_data.get('appointment_type', 'consultation'),
+                'priority': serializer.validated_data.get('priority', 'normal'),
+                'appointment_date': appointment_date
+            }
+
+            try:
+                # Try ML doctor assignment first
+                from api.utils.doctor_assignment import assign_doctor
+                assigned_doctor = assign_doctor(appointment_data)
+                
+                if assigned_doctor:
+                    appointment = serializer.save(
+                        patient=self.request.user,
+                        doctor=assigned_doctor
+                    )
+                else:
+                    # Fallback to availability-based assignment
+                    assigned_doctor = self._fallback_doctor_assignment(appointment_data)
+                    if not assigned_doctor:
+                        raise ValidationError("No doctors available for this appointment.")
+                    
+                    appointment = serializer.save(
+                        patient=self.request.user,
+                        doctor=assigned_doctor
+                    )
+                    
+            except ImportError:
+                # ML module not available, use fallback
+                assigned_doctor = self._fallback_doctor_assignment(appointment_data)
+                if not assigned_doctor:
+                    raise ValidationError("No doctors available for this appointment.")
+                
+                appointment = serializer.save(
+                    patient=self.request.user,
+                    doctor=assigned_doctor
+                )
+                
+        else:
+            # Validate doctor availability
+            if not self._is_doctor_available(doctor, appointment_date):
+                raise ValidationError("Doctor is not available at the requested time.")
+            
+            appointment = serializer.save(patient=self.request.user)
+        
+        # Send confirmation (with error handling)
+        try:
+            self._send_appointment_confirmation(appointment)
+        except Exception as e:
+            logger.error(f"Failed to send appointment confirmation: {e}")
+            # Don't raise the error - appointment creation should succeed even if notification fails
+        
+        return appointment
+
+    def _fallback_doctor_assignment(self, appointment_data):
+        """
+        Fallback method for doctor assignment when ML service is unavailable
+        """
+        from api.models import Doctor
+        
+        appointment_date = appointment_data['appointment_date']
+        department = appointment_data['department']
+        hospital = appointment_data['hospital']
+        
+        # Get all active doctors in the department
+        available_doctors = Doctor.objects.filter(
+            department=department,
+            hospital=hospital,
+            is_active=True,
+            status='active',
+            available_for_appointments=True
+        )
+        
+        # Filter by availability on the appointment date
+        for doctor in available_doctors:
+            if self._is_doctor_available(doctor, appointment_date):
+                return doctor
+        
+        return None
+
+    def _is_doctor_available(self, doctor, appointment_date):
+        """
+        Check if a doctor is available for a given appointment date
+        """
+        # Check if date is within doctor's consultation days
+        day_name = appointment_date.strftime('%a')  # Get 3-letter day name
+        if day_name not in [d.strip() for d in doctor.consultation_days.split(',')]:
+            return False
+        
+        # Check if time is within consultation hours
+        appointment_time = appointment_date.time()
+        if not (doctor.consultation_hours_start <= appointment_time <= doctor.consultation_hours_end):
+            return False
+        
+        # Check for overlapping appointments
+        appointment_end = appointment_date + timedelta(minutes=doctor.appointment_duration)
+        overlapping = Appointment.objects.filter(
+            doctor=doctor,
+            status__in=['pending', 'confirmed', 'in_progress'],
+            appointment_date__date=appointment_date.date(),  # Only check appointments on the same day
+            appointment_date__gte=appointment_date,  # Start time is after or at the requested time
+            appointment_date__lt=appointment_end  # Start time is before the end of the requested slot
+        ).exists()
+        
+        return not overlapping
+
+    def _send_appointment_confirmation(self, appointment):
+        """
+        Send appointment confirmation with error handling
+        """
+        try:
+            # Create email notification for the patient
+            AppointmentNotification.objects.create(
+                appointment=appointment,
+                recipient=appointment.patient,
+                notification_type='email',
+                event_type='booking_confirmation',
+                subject='Appointment Confirmation',
+                message=f'Your appointment with Dr. {appointment.doctor.user.get_full_name()} '
+                        f'has been scheduled for {appointment.appointment_date.strftime("%B %d, %Y at %I:%M %p")}.',
+                scheduled_time=timezone.now()
+            )
+            
+            # Create SMS notification for the patient
+            AppointmentNotification.objects.create(
+                appointment=appointment,
+                recipient=appointment.patient,
+                notification_type='sms',
+                event_type='booking_confirmation',
+                subject='Appointment Confirmation',
+                message=f'Your appointment with Dr. {appointment.doctor.user.get_full_name()} '
+                        f'has been scheduled for {appointment.appointment_date.strftime("%B %d, %Y at %I:%M %p")}.',
+                scheduled_time=timezone.now()
+            )
+            
+            # Create notification for the doctor
+            AppointmentNotification.objects.create(
+                appointment=appointment,
+                recipient=appointment.doctor.user,
+                notification_type='email',
+                event_type='booking_confirmation',
+                subject='New Appointment',
+                message=f'New appointment scheduled with {appointment.patient.get_full_name()} '
+                        f'on {appointment.appointment_date.strftime("%B %d, %Y at %I:%M %p")}.',
+                scheduled_time=timezone.now()
+            )
+            
+            # Create reminders
+            appointment.create_reminders()
+            
+        except Exception as e:
+            logger.error(f"Error sending appointment confirmation: {str(e)}")
+            # Don't raise the error - appointment creation should succeed even if notification fails
+
+class HospitalLocationViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for location-based hospital search and registration.
+    """
+    queryset = Hospital.objects.all()
+    serializer_class = HospitalLocationSerializer
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=['get'])
+    def nearby(self, request):
+        """
+        Find nearby hospitals based on user's location or IP address.
+        """
+        # Get location parameters
+        latitude = request.query_params.get('latitude')
+        longitude = request.query_params.get('longitude')
+        radius = request.query_params.get('radius', 10)  # Default 10km radius
+
+        try:
+            # If coordinates not provided, try to get location from IP
+            if not (latitude and longitude):
+                ip_address = request.META.get('REMOTE_ADDR')
+                location_info = get_location_from_ip(ip_address)
+                if location_info:
+                    latitude = location_info.get('latitude')
+                    longitude = location_info.get('longitude')
+
+            if not (latitude and longitude):
+                return Response(
+                    {"error": "Location information not available"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Convert to float
+            latitude = float(latitude)
+            longitude = float(longitude)
+            radius = float(radius)
+
+            # Find nearby hospitals
+            hospitals = Hospital.find_nearby_hospitals(
+                latitude=latitude,
+                longitude=longitude,
+                radius_km=radius
+            )
+
+            # Serialize the results
+            serializer = NearbyHospitalSerializer(
+                hospitals,
+                many=True,
+                context={'request': request}
+            )
+
+            return Response({
+                'hospitals': serializer.data,
+                'location': {
+                    'latitude': latitude,
+                    'longitude': longitude,
+                    'radius_km': radius
+                }
+            })
+
+        except (ValueError, TypeError) as e:
+            return Response(
+                {"error": f"Invalid location parameters: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"An error occurred: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['post'])
+    def register(self, request, pk=None):
+        """
+        Register the current user with a hospital.
+        """
+        hospital = self.get_object()
+        user = request.user
+
+        # Check if already registered
+        existing_registration = HospitalRegistration.objects.filter(
+            user=user,
+            hospital=hospital
+        ).first()
+
+        if existing_registration:
+            return Response({
+                "error": "Already registered with this hospital",
+                "registration": HospitalRegistrationSerializer(existing_registration).data
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create new registration
+        try:
+            # Check if this is the user's first registration
+            is_first_registration = not HospitalRegistration.objects.filter(
+                user=user
+            ).exists()
+
+            registration = HospitalRegistration.objects.create(
+                user=user,
+                hospital=hospital,
+                is_primary=is_first_registration,  # Set as primary if first registration
+                status='pending'
+            )
+
+            return Response({
+                "message": "Registration request submitted successfully",
+                "registration": HospitalRegistrationSerializer(registration).data
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({
+                "error": f"Registration failed: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'])
+    def set_primary(self, request, pk=None):
+        """
+        Set a hospital as the user's primary hospital.
+        """
+        hospital = self.get_object()
+        user = request.user
+
+        try:
+            # Check if registered and approved
+            registration = HospitalRegistration.objects.filter(
+                user=user,
+                hospital=hospital,
+                status='approved'
+            ).first()
+
+            if not registration:
+                return Response({
+                    "error": "Must be registered and approved with this hospital first"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Update primary status
+            HospitalRegistration.objects.filter(
+                user=user,
+                is_primary=True
+            ).update(is_primary=False)
+
+            registration.is_primary = True
+            registration.save()
+
+            return Response({
+                "message": "Primary hospital updated successfully",
+                "registration": HospitalRegistrationSerializer(registration).data
+            })
+
+        except Exception as e:
+            return Response({
+                "error": f"Failed to set primary hospital: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR) 
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def pending_registrations(request):
-    # Simple debug response
-    from api.models import HospitalRegistration
+def has_primary_hospital(request):
+    """
+    Check if the authenticated user has a registered primary hospital
     
-    # Get all registrations regardless of status
-    all_regs = HospitalRegistration.objects.all()
-    
-    response_data = {
-        'debug_info': {
-            'user_email': request.user.email,
-            'user_role': request.user.role,
-            'is_authenticated': request.user.is_authenticated,
-            'total_registrations': all_regs.count(),
-            'registrations': []
+    Returns:
+        {
+            "has_primary": true/false,
+            "primary_hospital": { hospital data } or null
         }
-    }
+    """
+    # Get the user's registered hospitals
+    primary_registration = HospitalRegistration.objects.filter(
+        user=request.user,
+        is_primary=True
+    ).first()
     
-    # Add basic info about each registration
-    for reg in all_regs:
-        response_data['debug_info']['registrations'].append({
-            'user_email': reg.user.email,
-            'hospital_name': reg.hospital.name,
-            'status': reg.status,
+    if primary_registration:
+        return Response({
+            "has_primary": True,
+            "primary_hospital": {
+                "id": primary_registration.hospital.id,
+                "name": primary_registration.hospital.name,
+                "address": primary_registration.hospital.address,
+                "city": primary_registration.hospital.city,
+                "country": primary_registration.hospital.country,
+                "registration_date": primary_registration.registration_date,
+                "status": primary_registration.status,
+            }
         })
-    
-    return Response(response_data)
+    else:
+        return Response({
+            "has_primary": False,
+            "primary_hospital": None
+        })
+
+# existing views continue here...        
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])

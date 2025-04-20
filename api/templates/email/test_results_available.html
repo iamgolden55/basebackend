@@ -1,0 +1,73 @@
+{% extends "email/base_email.html" %}
+
+{% block title %}Test Results Available - {{ appointment_id }}{% endblock %}
+
+{% block content %}
+<tr>
+    <td class="content-cell">
+        <div class="f-fallback">
+            <h1>Hello {{ patient_name }},</h1>
+            <p>Your test results from your recent appointment are now available.</p>
+            
+            <table class="attributes" width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                <tr>
+                    <td class="attributes_content">
+                        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Related Appointment:</strong> {{ appointment_id }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Doctor:</strong> {{ doctor_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Department:</strong> {{ department_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Hospital:</strong> {{ hospital_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+
+            <p>To View Your Results:</p>
+            <ul>
+                <li>Log in to your patient portal</li>
+                <li>Navigate to the "Test Results" section</li>
+                <li>Select the results dated from your recent appointment</li>
+            </ul>
+
+            <p>Important Information:</p>
+            <ul>
+                <li>Your doctor has reviewed these results</li>
+                <li>If any immediate action is required, you will be contacted separately</li>
+                <li>You can discuss these results at your next appointment</li>
+                <li>If you have any concerns, please contact us</li>
+            </ul>
+
+            <div style="background-color: #f3f3f3; padding: 15px; margin: 20px 0;">
+                <p style="font-weight: bold;">Privacy Notice:</p>
+                <p>Your test results are confidential and can only be accessed through your secure patient portal.</p>
+            </div>
+            
+            <p>Thank you for choosing {{ hospital_name }} for your healthcare needs.</p>
+        </div>
+    </td>
+</tr>
+{% endblock %} 

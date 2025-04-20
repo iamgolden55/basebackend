@@ -1,0 +1,70 @@
+{% extends "email/base_email.html" %}
+
+{% block title %}Payment Confirmation - {{ appointment_id }}{% endblock %}
+
+{% block content %}
+<tr>
+    <td class="content-cell">
+        <div class="f-fallback">
+            <h1>Hello {{ patient_name }},</h1>
+            <p>Thank you for your payment. Your appointment has been fully confirmed.</p>
+            
+            <table class="attributes" width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                <tr>
+                    <td class="attributes_content">
+                        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Appointment ID:</strong> {{ appointment_id }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Payment Status:</strong> {{ payment_status }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Appointment Date:</strong> {{ appointment_date|date:"l, F j, Y" }} at {{ appointment_date|time:"g:i A" }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Doctor:</strong> {{ doctor_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Hospital:</strong> {{ hospital_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+
+            <p>Your appointment is now fully confirmed. Please remember:</p>
+            <ul>
+                <li>Arrive 15 minutes before your scheduled time</li>
+                <li>Bring your appointment ID for reference</li>
+                <li>Bring any relevant medical records</li>
+                <li>A copy of this receipt will be available in your account</li>
+            </ul>
+
+            <p>If you need to cancel or reschedule, please do so at least 24 hours in advance to be eligible for a refund according to our policy.</p>
+            
+            <p>Thank you for choosing {{ hospital_name }}!</p>
+        </div>
+    </td>
+</tr>
+{% endblock %} 

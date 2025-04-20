@@ -1,0 +1,109 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<div class="email-container">
+    <div class="header">
+        <h1>Appointment Cancelled 🚫</h1>
+    </div>
+
+    <div class="content">
+        <p>Hello {{ patient_name }},</p>
+        
+        <p>Your appointment has been cancelled. Here are the details of the cancelled appointment:</p>
+        
+        <div class="appointment-details">
+            <div class="detail-row">
+                <span class="label">Doctor:</span>
+                <span class="value">{{ doctor_name }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Date:</span>
+                <span class="value">{{ appointment_date }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Time:</span>
+                <span class="value">{{ appointment_time }}</span>
+            </div>
+        </div>
+
+        <div class="next-steps">
+            <h3>Next Steps 📋</h3>
+            <p>If you would like to schedule a new appointment:</p>
+            <ul>
+                <li>Log into your account</li>
+                <li>Go to the appointments section</li>
+                <li>Click on "Schedule New Appointment"</li>
+                <li>Choose your preferred date and time</li>
+            </ul>
+        </div>
+
+        <div class="footer-note">
+            <p>If you have any questions or need assistance, please don't hesitate to contact us.</p>
+            <p>Thank you for your understanding! 🙏</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .email-container {
+        max-width: 600px;
+        margin: 0 auto;
+        font-family: Arial, sans-serif;
+    }
+    
+    .header {
+        background-color: #dc3545;
+        color: white;
+        padding: 20px;
+        text-align: center;
+        border-radius: 5px 5px 0 0;
+    }
+    
+    .content {
+        padding: 20px;
+        background-color: #ffffff;
+        border-radius: 0 0 5px 5px;
+    }
+    
+    .appointment-details {
+        background-color: #f9f9f9;
+        padding: 20px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+    
+    .detail-row {
+        margin: 10px 0;
+        display: flex;
+        justify-content: space-between;
+    }
+    
+    .label {
+        font-weight: bold;
+        color: #666;
+    }
+    
+    .value {
+        color: #333;
+    }
+    
+    .next-steps {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+    
+    .next-steps ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+    
+    .footer-note {
+        border-top: 1px solid #eee;
+        margin-top: 20px;
+        padding-top: 20px;
+        color: #666;
+    }
+</style>
+{% endblock %} 

@@ -6,8 +6,62 @@ from django.contrib.auth.models import AbstractUser
 from datetime import datetime, timedelta, timezone
 import random
 from .manager import CustomUserManager
+from django.conf import settings
+
+"""
+TODO: Consider implementing a more scalable language solution using a separate Language model:
+
+class Language(models.Model):
+    code = models.CharField(max_length=10, unique=True)
+    name = models.CharField(max_length=100)
+    is_active = models.BooleanField(default=True)
+    added_by_user = models.BooleanField(default=False)  # Flag for community-added languages
+    
+    def __str__(self):
+        return self.name
+
+Then replace LANGUAGE_CHOICES with a ForeignKey to Language model.
+This would allow for dynamic addition of languages without code changes.
+"""
 
 class CustomUser(AbstractUser):
+    # Language Preferences
+    LANGUAGE_CHOICES = [
+        ('en', 'English'),
+        ('fr', 'French'),
+        ('ar', 'Arabic'),
+        ('sw', 'Swahili'),
+        ('ha', 'Hausa'),
+        ('yo', 'Yoruba'),
+        ('ig', 'Igbo'),
+        ('am', 'Amharic'),
+        ('zu', 'Zulu'),
+        ('xh', 'Xhosa'),
+        ('pt', 'Portuguese'),
+        ('other', 'Other (Please specify)'),
+    ]
+    
+    preferred_language = models.CharField(
+        max_length=10,
+        choices=LANGUAGE_CHOICES,
+        default='en',
+        help_text="Primary language for communication"
+    )
+    
+    custom_language = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="If 'Other' is selected, please specify your preferred language"
+    )
+    
+    secondary_languages = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Comma-separated list of language codes (e.g., 'fr,sw,ar')"
+    )
+
     # Override groups and user_permissions with custom related_names
     groups = models.ManyToManyField(
         'auth.Group',

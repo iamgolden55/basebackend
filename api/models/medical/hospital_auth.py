@@ -36,6 +36,9 @@ class HospitalAdmin(models.Model):
     email = models.EmailField(unique=True)
     password = models.CharField(max_length=128)  # This will be removed later
 
+    # Add the custom manager
+    objects = HospitalAdminManager()
+
     def save(self, *args, **kwargs):
         creating = self._state.adding  # Check if this is a new instance
         if creating:

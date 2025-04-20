@@ -1,0 +1,70 @@
+{% extends "email/base_email.html" %}
+
+{% block title %}Medical Referral - {{ appointment_id }}{% endblock %}
+
+{% block content %}
+<tr>
+    <td class="content-cell">
+        <div class="f-fallback">
+            <h1>Hello {{ patient_name }},</h1>
+            <p>{{ doctor_name }} has referred you for specialized care in the {{ department_name }} department.</p>
+            
+            <table class="attributes" width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                <tr>
+                    <td class="attributes_content">
+                        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Original Appointment:</strong> {{ appointment_id }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Referring Doctor:</strong> {{ doctor_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Referred Department:</strong> {{ department_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="attributes_item">
+                                    <span class="f-fallback">
+                                        <strong>Hospital:</strong> {{ hospital_name }}
+                                    </span>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+            </table>
+
+            <p>Next Steps:</p>
+            <ul>
+                <li>Please schedule an appointment with a specialist in the {{ department_name }} department</li>
+                <li>Your medical records from your previous appointment will be shared with the specialist</li>
+                <li>Bring any additional medical records or test results to your specialist appointment</li>
+                {% if not is_insurance_based %}
+                <li>Check with your insurance provider about coverage for specialist care</li>
+                {% endif %}
+            </ul>
+
+            <p>Important Information:</p>
+            <ul>
+                <li>Your referral is valid for the next 3 months</li>
+                <li>You can schedule your specialist appointment through our website or by calling us</li>
+                <li>If you have any questions about the referral, please contact us</li>
+            </ul>
+            
+            <p>We're here to ensure you receive the best possible care!</p>
+        </div>
+    </td>
+</tr>
+{% endblock %} 

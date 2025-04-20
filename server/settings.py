@@ -61,6 +61,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "corsheaders.middleware.CorsMiddleware",
+    "api.middleware.payment_security.PaymentSecurityMiddleware",
 ]
 
 ROOT_URLCONF = "server.urls"
@@ -124,6 +125,12 @@ AUTH_PASSWORD_VALIDATORS = [
 
 AUTH_USER_MODEL = 'api.CustomUser'
 
+# Authentication backends
+AUTHENTICATION_BACKENDS = [
+    'api.auth.EmailBackend',  # Custom email-based authentication
+    'django.contrib.auth.backends.ModelBackend',  # Default Django authentication
+]
+
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
 
@@ -137,10 +144,15 @@ USE_TZ = True
 
 
 # Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.1/howto/static-files/
-
 STATIC_URL = "static/"
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'static'),
+]
+
+# Media files (Uploaded files)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
@@ -166,3 +178,55 @@ CORS_ALLOW_METHODS = [
     'POST',
     'PUT',
 ]
+
+# Payment Provider Settings
+PAYMENT_PROVIDERS = {
+    'paystack': {
+        'secret_key': os.environ.get('PAYSTACK_SECRET_KEY'),
+        'public_key': os.environ.get('PAYSTACK_PUBLIC_KEY'),
+        'webhook_secret': os.environ.get('PAYSTACK_WEBHOOK_SECRET'),
+        'callback_url': os.environ.get('PAYSTACK_CALLBACK_URL'),
+        'urls': {
+            'initialize': 'https://api.paystack.co/transaction/initialize',
+            'verify': 'https://api.paystack.co/transaction/verify',
+            'refund': 'https://api.paystack.co/refund'
+        }
+    }
+}
+
+# Payment Security Settings
+PAYMENT_SECURITY = {
+    'max_attempts': 3,  # Maximum payment attempts
+    'lockout_duration': 30,  # Minutes to lock after max attempts
+    'amount_limit': 1000000,  # Maximum amount per transaction
+    'daily_limit': 5000000,  # Maximum amount per day
+    'allowed_countries': ['NG', 'GH', 'ZA'],  # Allowed countries
+    'blocked_ips': [],  # IPs to block
+    'rate_limit': {
+        'window': 3600,  # 1 hour
+        'max_requests': 100  # Maximum requests per window
+    }
+}
+
+# Security Team Email
+SECURITY_TEAM_EMAIL = os.environ.get('SECURITY_TEAM_EMAIL', 'security@yourdomain.com')
+
+# Cache settings for rate limiting
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': 'redis://127.0.0.1:6379/1',
+        'OPTIONS': {
+            'parser_class': 'redis.connection.DefaultParser',
+            'pool_class': 'redis.ConnectionPool',
+            'retry_on_timeout': True,
+            'socket_timeout': 5,
+            'socket_connect_timeout': 5,
+        }
+    }
+}
+
+TWILIO_ACCOUNT_SID = 'your_account_sid'
+TWILIO_AUTH_TOKEN = 'your_auth_token'
+TWILIO_PHONE_NUMBER = 'your_twilio_phone_number'
+TWILIO_WHATSAPP_NUMBER = 'your_twilio_whatsapp_number'

@@ -9,6 +9,7 @@ from datetime import date
 from .staff_transfer import StaffTransfer
 from .department import Department
 import uuid
+import math
 
 class Hospital(models.Model):
     """
@@ -20,6 +21,26 @@ class Hospital(models.Model):
     address = models.TextField()
     phone = models.CharField(max_length=20, blank=True, null=True)
     website = models.URLField(blank=True, null=True)
+    
+    # Location Information
+    latitude = models.DecimalField(
+        max_digits=9, 
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="Hospital's latitude coordinate"
+    )
+    longitude = models.DecimalField(
+        max_digits=9, 
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="Hospital's longitude coordinate"
+    )
+    city = models.CharField(max_length=100, null=True, blank=True)
+    state = models.CharField(max_length=100, null=True, blank=True)
+    country = models.CharField(max_length=100, null=True, blank=True)
+    postal_code = models.CharField(max_length=20, null=True, blank=True)
     
     # Registration and Verification
     registration_number = models.CharField(
@@ -265,6 +286,85 @@ class Hospital(models.Model):
             # Generate a unique registration number if not provided
             self.registration_number = f"H-{uuid.uuid4().hex[:8].upper()}"
         super().save(*args, **kwargs)
+
+    @classmethod
+    def find_nearby_hospitals(cls, latitude, longitude, radius_km=10):
+        """
+        Find hospitals within a specified radius of a given location using the Haversine formula.
+        
+        Args:
+            latitude (float): User's latitude
+            longitude (float): User's longitude
+            radius_km (int): Search radius in kilometers
+            
+        Returns:
+            QuerySet: Hospitals within the specified radius, ordered by distance
+        """
+        # Convert latitude and longitude to radians
+        lat_rad = math.radians(float(latitude))
+        lon_rad = math.radians(float(longitude))
+        
+        # Get all hospitals
+        hospitals = cls.objects.all()
+        nearby_hospitals = []
+        
+        for hospital in hospitals:
+            if hospital.latitude and hospital.longitude:
+                # Calculate distance using Haversine formula
+                hospital_lat_rad = math.radians(float(hospital.latitude))
+                hospital_lon_rad = math.radians(float(hospital.longitude))
+                
+                # Haversine formula
+                dlon = hospital_lon_rad - lon_rad
+                dlat = hospital_lat_rad - lat_rad
+                a = math.sin(dlat/2)**2 + math.cos(lat_rad) * math.cos(hospital_lat_rad) * math.sin(dlon/2)**2
+                c = 2 * math.asin(math.sqrt(a))
+                distance = 6371 * c  # Earth's radius in km * c
+                
+                if distance <= radius_km:
+                    hospital.distance = distance
+                    nearby_hospitals.append(hospital)
+        
+        # Sort by distance
+        return sorted(nearby_hospitals, key=lambda x: x.distance)
+
+    def get_distance_from(self, latitude, longitude):
+        """
+        Calculate distance from a given point to this hospital using the Haversine formula.
+        
+        Args:
+            latitude (float): Point's latitude
+            longitude (float): Point's longitude
+            
+        Returns:
+            float: Distance in kilometers
+        """
+        if not (self.latitude and self.longitude):
+            return None
+            
+        # Convert to radians
+        lat1_rad = math.radians(float(latitude))
+        lon1_rad = math.radians(float(longitude))
+        lat2_rad = math.radians(float(self.latitude))
+        lon2_rad = math.radians(float(self.longitude))
+        
+        # Haversine formula
+        dlon = lon2_rad - lon1_rad
+        dlat = lat2_rad - lat1_rad
+        a = math.sin(dlat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        
+        # Earth's radius in kilometers
+        return 6371 * c
+
+    @property
+    def coordinates(self):
+        """
+        Returns the hospital's coordinates as a tuple.
+        """
+        if self.latitude and self.longitude:
+            return (float(self.latitude), float(self.longitude))
+        return None
 
 #===================================== GP PRACTICE REGION ===============================================================    
 

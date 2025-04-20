@@ -9,6 +9,8 @@ from api.views import (
     LoginView,
     CustomTokenObtainPairView
 )
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -21,3 +23,7 @@ urlpatterns = [
     path('api/verify-login-otp/', VerifyLoginOTPView.as_view(), name='verify-otp'),  # Keep only one
     path('api/login/', LoginView.as_view(), name='login'),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
