@@ -287,7 +287,46 @@ class Appointment(TimestampedModel):
         elif self.status == 'completed' and not self.completed_at:
             self.completed_at = timezone.now()
             
+        # Check if this is a new instance before saving
+        _is_new = self.pk is None 
+        
         super().save(*args, **kwargs)
+        
+        # Create booking confirmation notifications if it's a new appointment
+        if _is_new:
+            # Create Email Notification
+            AppointmentNotification.objects.create(
+                appointment=self,
+                notification_type='email',
+                event_type='booking_confirmation',
+                recipient=self.patient,
+                subject=f"Appointment Booking Confirmation - {self.appointment_id}",
+                message=(
+                    f"Dear {self.patient.get_full_name()},\n\n"
+                    f"Your appointment with Dr. {self.doctor.user.get_full_name()} "
+                    f"at {self.hospital.name} ({self.department.name}) on "
+                    f"{self.appointment_date.strftime('%Y-%m-%d %H:%M')} has been booked.\n\n"
+                    f"Appointment ID: {self.appointment_id}\n"
+                ),
+                # Optionally specify a template name if using email templates
+                # template_name='appointment_booking_confirmation' 
+            )
+            
+            # Create SMS Notification (adjust message for SMS length constraints)
+            AppointmentNotification.objects.create(
+                appointment=self,
+                notification_type='sms',
+                event_type='booking_confirmation',
+                recipient=self.patient,
+                subject=f"Appt Confirmed: {self.appointment_id}", # Shorter subject for SMS?
+                message=(
+                    f"Appt Confirmed: Dr. {self.doctor.user.last_name}, "
+                    f"{self.appointment_date.strftime('%b %d, %H:%M')}. "
+                    f"ID: {self.appointment_id}. "
+                    f"Hospital: {self.hospital.name[:10]}"
+                )
+                # template_name='sms_booking_confirmation' # Optional template
+            )
 
     @staticmethod
     def generate_appointment_id():

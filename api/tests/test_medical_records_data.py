@@ -9,6 +9,9 @@ from api.models.medical.hospital import Hospital
 from api.models.medical.appointment import Appointment
 from api.models.medical.doctor_assignment import doctor_assigner
 from api.models.medical.hospital_registration import HospitalRegistration
+from api.models.medical.appointment_fee import AppointmentFee
+from decimal import Decimal
+from django.db import connection
 
 class TestMedicalRecordsData(TestCase):
     """Test case for creating realistic medical records data and testing doctor assignment"""
@@ -186,6 +189,29 @@ class TestMedicalRecordsData(TestCase):
             continuity_of_care_rating=7.5
         )
         
+        # Create AppointmentFee for doctors
+        self.cardio_fee = AppointmentFee.objects.create(
+            hospital=self.hospital,
+            department=self.cardiology_dept,
+            doctor=self.cardio_doctor,
+            fee_type='consultation',
+            base_fee=Decimal('150.00'),
+            currency='NGN',
+            is_active=True,
+            valid_from=timezone.now().date()
+        )
+        self.endo_fee = AppointmentFee.objects.create(
+            hospital=self.hospital,
+            department=self.endocrinology_dept,
+            doctor=self.endo_doctor,
+            fee_type='follow_up',
+            base_fee=Decimal('120.00'),
+            currency='NGN',
+            is_active=True,
+            valid_from=timezone.now().date()
+        )
+        # We might need a neuro_fee too, but it's not used in the failing test yet.
+        
         # Create patients
         self.patient1 = CustomUser.objects.create(
             username="patient1",
@@ -265,10 +291,10 @@ class TestMedicalRecordsData(TestCase):
             last_visit_date=timezone.now() - timedelta(days=15)
         )
     
-    def test_create_medical_data(self):
-        """Create realistic medical data for patients and test doctor assignment"""
+    def create_initial_medical_data(self):
+        """Helper method to create initial diagnoses and treatments"""
         # Add diagnoses for Patient 1 (Hypertension and Diabetes)
-        diagnosis1_1 = PatientDiagnosis.objects.create(
+        PatientDiagnosis.objects.create(
             medical_record=self.record1,
             diagnosis_code="I10",
             diagnosis_name="Essential (primary) hypertension",
@@ -280,7 +306,7 @@ class TestMedicalRecordsData(TestCase):
             notes="Patient has family history of hypertension"
         )
         
-        diagnosis1_2 = PatientDiagnosis.objects.create(
+        PatientDiagnosis.objects.create(
             medical_record=self.record1,
             diagnosis_code="E11",
             diagnosis_name="Type 2 diabetes mellitus",
@@ -292,7 +318,7 @@ class TestMedicalRecordsData(TestCase):
             notes="Poor glycemic control, HbA1c: 8.5%"
         )
         
-        diagnosis1_3 = PatientDiagnosis.objects.create(
+        PatientDiagnosis.objects.create(
             medical_record=self.record1,
             diagnosis_code="I25.1",
             diagnosis_name="Atherosclerotic heart disease",
@@ -305,7 +331,7 @@ class TestMedicalRecordsData(TestCase):
         )
         
         # Add treatments for Patient 1
-        treatment1_1 = PatientTreatment.objects.create(
+        PatientTreatment.objects.create(
             medical_record=self.record1,
             treatment_type="medication",
             treatment_name="Lisinopril",
@@ -318,7 +344,7 @@ class TestMedicalRecordsData(TestCase):
             notes="For hypertension"
         )
         
-        treatment1_2 = PatientTreatment.objects.create(
+        PatientTreatment.objects.create(
             medical_record=self.record1,
             treatment_type="medication",
             treatment_name="Metformin",
@@ -331,7 +357,7 @@ class TestMedicalRecordsData(TestCase):
             notes="For diabetes"
         )
         
-        treatment1_3 = PatientTreatment.objects.create(
+        PatientTreatment.objects.create(
             medical_record=self.record1,
             treatment_type="medication",
             treatment_name="Aspirin",
@@ -345,7 +371,7 @@ class TestMedicalRecordsData(TestCase):
         )
         
         # Add doctor interactions for Patient 1
-        interaction1_1 = DoctorInteraction.objects.create(
+        DoctorInteraction.objects.create(
             medical_record=self.record1,
             doctor=self.cardio_doctor,
             interaction_date=timezone.now() - timedelta(days=365),
@@ -354,7 +380,7 @@ class TestMedicalRecordsData(TestCase):
             doctor_notes="Initial diagnosis of hypertension"
         )
         
-        interaction1_2 = DoctorInteraction.objects.create(
+        DoctorInteraction.objects.create(
             medical_record=self.record1,
             doctor=self.endo_doctor,
             interaction_date=timezone.now() - timedelta(days=300),
@@ -363,7 +389,7 @@ class TestMedicalRecordsData(TestCase):
             doctor_notes="Initial diagnosis of diabetes"
         )
         
-        interaction1_3 = DoctorInteraction.objects.create(
+        DoctorInteraction.objects.create(
             medical_record=self.record1,
             doctor=self.cardio_doctor,
             interaction_date=timezone.now() - timedelta(days=180),
@@ -373,7 +399,7 @@ class TestMedicalRecordsData(TestCase):
         )
         
         # Add diagnoses for Patient 2 (Migraine)
-        diagnosis2_1 = PatientDiagnosis.objects.create(
+        PatientDiagnosis.objects.create(
             medical_record=self.record2,
             diagnosis_code="G43.9",
             diagnosis_name="Migraine, unspecified",
@@ -385,7 +411,7 @@ class TestMedicalRecordsData(TestCase):
             notes="Frequent episodes, 2-3 times per month"
         )
         
-        diagnosis2_2 = PatientDiagnosis.objects.create(
+        PatientDiagnosis.objects.create(
             medical_record=self.record2,
             diagnosis_code="G44.2",
             diagnosis_name="Tension-type headache",
@@ -398,7 +424,7 @@ class TestMedicalRecordsData(TestCase):
         )
         
         # Add treatments for Patient 2
-        treatment2_1 = PatientTreatment.objects.create(
+        PatientTreatment.objects.create(
             medical_record=self.record2,
             treatment_type="medication",
             treatment_name="Sumatriptan",
@@ -411,7 +437,7 @@ class TestMedicalRecordsData(TestCase):
             notes="Take at first sign of migraine"
         )
         
-        treatment2_2 = PatientTreatment.objects.create(
+        PatientTreatment.objects.create(
             medical_record=self.record2,
             treatment_type="medication",
             treatment_name="Propranolol",
@@ -424,7 +450,7 @@ class TestMedicalRecordsData(TestCase):
             notes="For migraine prevention"
         )
         
-        treatment2_3 = PatientTreatment.objects.create(
+        PatientTreatment.objects.create(
             medical_record=self.record2,
             treatment_type="therapy",
             treatment_name="Biofeedback",
@@ -435,7 +461,7 @@ class TestMedicalRecordsData(TestCase):
         )
         
         # Add doctor interactions for Patient 2
-        interaction2_1 = DoctorInteraction.objects.create(
+        DoctorInteraction.objects.create(
             medical_record=self.record2,
             doctor=self.neuro_doctor,
             interaction_date=timezone.now() - timedelta(days=400),
@@ -444,7 +470,7 @@ class TestMedicalRecordsData(TestCase):
             doctor_notes="Initial diagnosis of migraine"
         )
         
-        interaction2_2 = DoctorInteraction.objects.create(
+        DoctorInteraction.objects.create(
             medical_record=self.record2,
             doctor=self.neuro_doctor,
             interaction_date=timezone.now() - timedelta(days=350),
@@ -453,7 +479,7 @@ class TestMedicalRecordsData(TestCase):
             doctor_notes="Started preventive medication"
         )
         
-        interaction2_3 = DoctorInteraction.objects.create(
+        DoctorInteraction.objects.create(
             medical_record=self.record2,
             doctor=self.neuro_doctor,
             interaction_date=timezone.now() - timedelta(days=300),
@@ -463,7 +489,7 @@ class TestMedicalRecordsData(TestCase):
         )
         
         # Add diagnoses for Patient 3 (Diabetes)
-        diagnosis3_1 = PatientDiagnosis.objects.create(
+        PatientDiagnosis.objects.create(
             medical_record=self.record3,
             diagnosis_code="E11.9",
             diagnosis_name="Type 2 diabetes mellitus without complications",
@@ -475,7 +501,7 @@ class TestMedicalRecordsData(TestCase):
             notes="Family history of diabetes"
         )
         
-        diagnosis3_2 = PatientDiagnosis.objects.create(
+        PatientDiagnosis.objects.create(
             medical_record=self.record3,
             diagnosis_code="E11.2",
             diagnosis_name="Type 2 diabetes mellitus with kidney complications",
@@ -488,7 +514,7 @@ class TestMedicalRecordsData(TestCase):
         )
         
         # Add treatments for Patient 3
-        treatment3_1 = PatientTreatment.objects.create(
+        PatientTreatment.objects.create(
             medical_record=self.record3,
             treatment_type="medication",
             treatment_name="Metformin",
@@ -501,7 +527,7 @@ class TestMedicalRecordsData(TestCase):
             notes="For diabetes"
         )
         
-        treatment3_2 = PatientTreatment.objects.create(
+        PatientTreatment.objects.create(
             medical_record=self.record3,
             treatment_type="medication",
             treatment_name="Glimepiride",
@@ -514,7 +540,7 @@ class TestMedicalRecordsData(TestCase):
             notes="Added as second agent for diabetes"
         )
         
-        treatment3_3 = PatientTreatment.objects.create(
+        PatientTreatment.objects.create(
             medical_record=self.record3,
             treatment_type="medication",
             treatment_name="Lisinopril",
@@ -528,7 +554,7 @@ class TestMedicalRecordsData(TestCase):
         )
         
         # Add doctor interactions for Patient 3
-        interaction3_1 = DoctorInteraction.objects.create(
+        DoctorInteraction.objects.create(
             medical_record=self.record3,
             doctor=self.endo_doctor,
             interaction_date=timezone.now() - timedelta(days=500),
@@ -537,7 +563,7 @@ class TestMedicalRecordsData(TestCase):
             doctor_notes="Initial diagnosis of diabetes"
         )
         
-        interaction3_2 = DoctorInteraction.objects.create(
+        DoctorInteraction.objects.create(
             medical_record=self.record3,
             doctor=self.endo_doctor,
             interaction_date=timezone.now() - timedelta(days=400),
@@ -546,7 +572,7 @@ class TestMedicalRecordsData(TestCase):
             doctor_notes="Added second medication"
         )
         
-        interaction3_3 = DoctorInteraction.objects.create(
+        DoctorInteraction.objects.create(
             medical_record=self.record3,
             doctor=self.endo_doctor,
             interaction_date=timezone.now() - timedelta(days=200),
@@ -559,6 +585,10 @@ class TestMedicalRecordsData(TestCase):
         self.record1.update_complexity_metrics()
         self.record2.update_complexity_metrics()
         self.record3.update_complexity_metrics()
+
+    def test_doctor_assignment_with_medical_data(self):
+        """Test doctor assignment after creating medical data"""
+        self.create_initial_medical_data()
         
         # Print medical record statistics
         print("\n📊 Medical Record Statistics:")
@@ -584,13 +614,13 @@ class TestMedicalRecordsData(TestCase):
     
     def test_continuity_of_care(self):
         """Test continuity of care in doctor assignment by creating past appointments"""
-        # First create all the medical data
-        self.test_create_medical_data()
+        # Create the initial medical data first
+        self.create_initial_medical_data()
         
         # Generate unique appointment IDs
         appointment_id1 = Appointment.generate_appointment_id()
         appointment_id2 = Appointment.generate_appointment_id()
-        appointment_id3 = Appointment.generate_appointment_id()
+        # appointment_id3 is generated inside the loop
         
         # Get consultation hours for each doctor
         cardio_start_time = self.cardio_doctor.consultation_hours_start
@@ -605,6 +635,25 @@ class TestMedicalRecordsData(TestCase):
                 days_to_add = 7 - date_obj.weekday()  # Days until Monday
                 return date_obj + timedelta(days=days_to_add)
             return date_obj
+        
+        # Create future appointment dates within consultation hours (needed for initial create)
+        future_cardio_date = timezone.now() + timedelta(days=7)
+        future_cardio_date = future_cardio_date.replace(
+            hour=cardio_start_time.hour + 1,
+            minute=0, 
+            second=0, 
+            microsecond=0
+        )
+        future_cardio_date = ensure_weekday(future_cardio_date)
+        
+        future_endo_date = timezone.now() + timedelta(days=7)
+        future_endo_date = future_endo_date.replace(
+            hour=endo_start_time.hour + 1,
+            minute=0, 
+            second=0, 
+            microsecond=0
+        )
+        future_endo_date = ensure_weekday(future_endo_date)
         
         # Create past appointment dates within consultation hours
         # For cardio doctor (8:00 - 16:00)
@@ -634,14 +683,22 @@ class TestMedicalRecordsData(TestCase):
             hospital=self.hospital,
             department=self.cardiology_dept,
             doctor=self.cardio_doctor,
+            fee=self.cardio_fee, # Add fee
             appointment_type='follow_up',
             priority='normal',
-            status='completed',
-            appointment_date=cardio_past_date,
+            status='pending', # Start as pending with future date
+            appointment_date=future_cardio_date, # Use valid future date
             duration=30,
-            chief_complaint="Chest pain and shortness of breath",
-            completed_at=cardio_past_date
+            chief_complaint="Chest pain and shortness of breath"
         )
+        # Now update to past date and completed status using raw SQL to bypass validation
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """UPDATE api_appointment 
+                   SET appointment_date = %s, completed_at = %s, status = 'completed'
+                   WHERE id = %s""",
+                [cardio_past_date, cardio_past_date, past_appointment1.id]
+            )
         
         # Create past appointments for Patient 2 with Cardiology
         # Make sure it's on a weekday
@@ -652,14 +709,22 @@ class TestMedicalRecordsData(TestCase):
             hospital=self.hospital,
             department=self.cardiology_dept,  # Intentionally using cardiology
             doctor=self.cardio_doctor,        # Using cardio doctor instead of neuro
+            fee=self.cardio_fee, # Add fee
             appointment_type='follow_up',
             priority='normal',
-            status='completed',
-            appointment_date=cardio_past_date2,
+            status='pending', # Start as pending with future date
+            appointment_date=future_cardio_date, # Use valid future date
             duration=30,
-            chief_complaint="Headache consultation",
-            completed_at=cardio_past_date2
+            chief_complaint="Headache consultation"
         )
+        # Now update to past date and completed status using raw SQL
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """UPDATE api_appointment 
+                   SET appointment_date = %s, completed_at = %s, status = 'completed'
+                   WHERE id = %s""",
+                [cardio_past_date2, cardio_past_date2, past_appointment2.id]
+            )
         
         # Create multiple past appointments for Patient 3 with Endocrinology
         # This should result in a strong continuity score
@@ -673,36 +738,24 @@ class TestMedicalRecordsData(TestCase):
                 hospital=self.hospital,
                 department=self.endocrinology_dept,
                 doctor=self.endo_doctor,
+                fee=self.endo_fee, # Add fee
                 appointment_type='follow_up',
                 priority='normal',
-                status='completed',
-                appointment_date=appointment_date,
+                status='pending', # Start as pending with future date
+                appointment_date=future_endo_date, # Use valid future date
                 duration=30,
-                chief_complaint="Diabetes follow-up",
-                completed_at=appointment_date
+                chief_complaint="Diabetes follow-up"
             )
+            # Now update to past date and completed status using raw SQL
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """UPDATE api_appointment 
+                       SET appointment_date = %s, completed_at = %s, status = 'completed'
+                       WHERE id = %s""",
+                    [appointment_date, appointment_date, past_appointment3.id]
+                )
         
         print("\n🔄 Testing Continuity of Care:")
-        
-        # Create future appointment dates within consultation hours
-        # For testing doctor assignment
-        future_cardio_date = timezone.now() + timedelta(days=7)
-        future_cardio_date = future_cardio_date.replace(
-            hour=cardio_start_time.hour + 1,
-            minute=0, 
-            second=0, 
-            microsecond=0
-        )
-        future_cardio_date = ensure_weekday(future_cardio_date)
-        
-        future_endo_date = timezone.now() + timedelta(days=7)
-        future_endo_date = future_endo_date.replace(
-            hour=endo_start_time.hour + 1,
-            minute=0, 
-            second=0, 
-            microsecond=0
-        )
-        future_endo_date = ensure_weekday(future_endo_date)
         
         # Test assignment for Patient 1 in Cardiology (should prefer cardio_doctor due to continuity)
         appointment_data1 = {

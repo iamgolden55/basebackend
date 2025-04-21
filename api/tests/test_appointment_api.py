@@ -350,6 +350,22 @@ class AppointmentAPITest(APITestCase):
             is_verified=True
         )
         
+        # Create a different patient for the second appointment
+        other_patient_user = get_user_model().objects.create_user(
+            username='otherpatient',
+            email='otherpatient@test.com',
+            password='testpass123',
+            first_name='Other',
+            last_name='Patient'
+        )
+        # Register the other patient
+        HospitalRegistration.objects.create(
+            user=other_patient_user,
+            hospital=self.hospital,
+            status='approved',
+            is_primary=True
+        )
+        
         # Create appointment for other doctor on a weekday (Monday-Friday)
         next_day = self.appointment_time
         
@@ -365,7 +381,7 @@ class AppointmentAPITest(APITestCase):
         print(f"Creating test appointment on {day_name} for doctor with consultation days: {other_doctor.consultation_days}")
         
         other_appointment = Appointment.objects.create(
-            patient=self.patient_user,
+            patient=other_patient_user,
             doctor=other_doctor,
             hospital=self.hospital,
             department=self.department,
