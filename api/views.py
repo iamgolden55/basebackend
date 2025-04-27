@@ -142,12 +142,20 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 class LoginView(APIView):
     def post(self, request):
         # Add debugging logs
-        print(f"Login attempt with data: {request.data}")
+        # print(f"Login attempt with data: {request.data}") # <-- Comment out or remove this line
+
+        # Log data safely, masking the password
+        log_data = request.data.copy() # Create a copy to avoid modifying the original data
+        if 'password' in log_data:
+            log_data['password'] = '********'
+        print(f"Login attempt with data: {log_data}") # <-- Log the masked data instead
+
         print(f"Content-Type: {request.content_type}")
-        
+
         email = request.data.get('email')
         password = request.data.get('password')
-        
+
+        # This print statement is okay as it already masks the password
         print(f"Extracted email: {email}, password: {'*' * len(password) if password else None}")
         
         if not email or not password:
@@ -470,7 +478,7 @@ class PasswordResetRequestView(APIView):
                 
                 # Create context with all required information
                 context = {
-                    'reset_link': f"{os.environ.get('NEXTJS_URL')}/auth/reset-password?token={token}",
+                    'reset_link': f"{os.environ.get('NEXTJS_URL')}reset-password?token={token}",
                     'user_name': user.first_name or 'there',
                     'country': location_info.get('country', 'Unknown'),
                     'city': location_info.get('city', 'Unknown'),
@@ -557,7 +565,7 @@ class HospitalRegistrationViewSet(viewsets.ModelViewSet):
 
         # Create serializer with modified data
         serializer = self.get_serializer(data={
-            'hospital': hospital_id,
+            'hospital_id': hospital_id,  # Use hospital_id instead of hospital
             'is_primary': request.data.get('is_primary', False),
             'user': request.user.id  # Make sure user is included
         })
@@ -935,6 +943,7 @@ class HospitalLocationViewSet(viewsets.ReadOnlyModelViewSet):
     def nearby(self, request):
         """
         Find nearby hospitals based on user's location or IP address.
+        With fallback to user's profile location if no hospitals found.
         """
         # Get location parameters
         latitude = request.query_params.get('latitude')
@@ -950,25 +959,63 @@ class HospitalLocationViewSet(viewsets.ReadOnlyModelViewSet):
                     latitude = location_info.get('latitude')
                     longitude = location_info.get('longitude')
 
-            if not (latitude and longitude):
-                return Response(
-                    {"error": "Location information not available"},
-                    status=status.HTTP_400_BAD_REQUEST
+            # Convert to float and initialize hospitals to empty list
+            hospitals = []
+            
+            # Only search by coordinates if we have them
+            if latitude and longitude:
+                # Convert to float
+                latitude = float(latitude)
+                longitude = float(longitude)
+                radius = float(radius)
+
+                # Find nearby hospitals
+                hospitals = Hospital.find_nearby_hospitals(
+                    latitude=latitude,
+                    longitude=longitude,
+                    radius_km=radius
                 )
 
-            # Convert to float
-            latitude = float(latitude)
-            longitude = float(longitude)
-            radius = float(radius)
-
-            # Find nearby hospitals
-            hospitals = Hospital.find_nearby_hospitals(
-                latitude=latitude,
-                longitude=longitude,
-                radius_km=radius
-            )
-
-            # Serialize the results
+            # If no hospitals found through geolocation, fallback to user's profile location
+            if not hospitals:
+                user = request.user
+                location_message = "No nearby hospitals found."
+                
+                # Check if user has state/city in their profile
+                if user.state or user.city:
+                    query = Q()
+                    
+                    # Add state and city filters if available
+                    if user.city:
+                        query |= Q(city__iexact=user.city)
+                    
+                    if user.state:
+                        query |= Q(state__iexact=user.state)
+                    
+                    # Find hospitals matching the user's location
+                    location_hospitals = Hospital.objects.filter(query)
+                    
+                    if location_hospitals.exists():
+                        hospitals = location_hospitals
+                        location_message = f"Showing hospitals in your profile location: {user.city or ''}, {user.state or ''}".strip(", ")
+                
+                # If still no hospitals, return all as last resort
+                if not hospitals:
+                    hospitals = Hospital.objects.all()
+                    location_message = "No hospitals found in your area. Showing all hospitals."
+                
+                # Serialize the results
+                serializer = HospitalSerializer(
+                    hospitals,
+                    many=True
+                )
+                
+                return Response({
+                    'message': location_message,
+                    'hospitals': serializer.data
+                })
+            
+            # Serialize the nearby results
             serializer = NearbyHospitalSerializer(
                 hospitals,
                 many=True,
@@ -1106,7 +1153,7 @@ def has_primary_hospital(request):
                 "address": primary_registration.hospital.address,
                 "city": primary_registration.hospital.city,
                 "country": primary_registration.hospital.country,
-                "registration_date": primary_registration.registration_date,
+                "registration_date": primary_registration.created_at,
                 "status": primary_registration.status,
             }
         })

@@ -305,6 +305,11 @@ class HospitalSerializer(serializers.ModelSerializer):
 class HospitalRegistrationSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
     hospital = HospitalSerializer(read_only=True)
+    hospital_id = serializers.PrimaryKeyRelatedField(
+        queryset=Hospital.objects.all(),
+        source='hospital',
+        write_only=True
+    )
 
     class Meta:
         model = HospitalRegistration
@@ -312,6 +317,7 @@ class HospitalRegistrationSerializer(serializers.ModelSerializer):
             'id',
             'user',
             'hospital',
+            'hospital_id',
             'status',
             'is_primary',
             'created_at',

@@ -45,4 +45,5 @@ tzdata==2024.2
 urllib3==2.2.3
 gunicorn
 geoip2
-twilio>=8.2.0
+twilio>=8.2.0scikit-learn==1.6.1
+redis==5.2.1
