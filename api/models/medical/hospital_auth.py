@@ -35,21 +35,39 @@ class HospitalAdmin(models.Model):
     position = models.CharField(max_length=255)
     email = models.EmailField(unique=True)
     password = models.CharField(max_length=128)  # This will be removed later
+    
+    # This will not be stored in the database, just used to pass data during object creation
+    _user_data = None
 
     # Add the custom manager
     objects = HospitalAdminManager()
 
     def save(self, *args, **kwargs):
         creating = self._state.adding  # Check if this is a new instance
-        if creating:
-            # Create CustomUser first
+        if creating and not self.user:
+            # Get additional user data if provided
+            user_data = getattr(self, '_user_data', {}) or {}
+            
+            # Create CustomUser first with enhanced data
             user = CustomUser.objects.create(
                 email=self.email,
-                first_name=self.name.split()[0],
-                last_name=' '.join(self.name.split()[1:]) if len(self.name.split()) > 1 else '',
+                first_name=self.name.split()[0] if not user_data.get('first_name') else user_data.get('first_name'),
+                last_name=' '.join(self.name.split()[1:]) if len(self.name.split()) > 1 and not user_data.get('last_name') else user_data.get('last_name', ''),
                 role='hospital_admin',  # Set the role
                 is_staff=True,  # Give them staff access
-                is_email_verified=True  # They're pre-verified
+                is_email_verified=True,  # They're pre-verified
+                date_of_birth=user_data.get('date_of_birth'),
+                gender=user_data.get('gender'),
+                phone=user_data.get('phone'),
+                country=user_data.get('country'),
+                state=user_data.get('state'),
+                city=user_data.get('city'),
+                preferred_language=user_data.get('preferred_language'),
+                secondary_languages=user_data.get('secondary_languages', []),
+                custom_language=user_data.get('custom_language', ''),
+                consent_terms=user_data.get('consent_terms', False),
+                consent_hipaa=user_data.get('consent_hipaa', False),
+                consent_data_processing=user_data.get('consent_data_processing', False)
             )
             user.set_password(self.password)
             user.save()

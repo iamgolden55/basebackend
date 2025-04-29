@@ -16,7 +16,8 @@ from .serializers import (
     OnboardingStatusSerializer, HospitalRegistrationSerializer, 
     HospitalAdminRegistrationSerializer, HospitalSerializer, 
     HospitalLocationSerializer, NearbyHospitalSerializer,
-    AppointmentSerializer, AppointmentListSerializer
+    AppointmentSerializer, AppointmentListSerializer,
+    ExistingUserToAdminSerializer
 )
 from django.contrib.auth import authenticate
 from django.core.mail import send_mail
@@ -661,14 +662,22 @@ class ApproveHospitalRegistrationView(APIView):
         }, status=status.HTTP_200_OK)    
 
 class HospitalAdminRegistrationView(generics.CreateAPIView):
-    serializer_class = HospitalAdminRegistrationSerializer
     permission_classes = [AllowAny]  # Initially allow anyone, but you might want to restrict this
     
+    def get_serializer_class(self):
+        if self.request.data.get('existing_user', False):
+            return ExistingUserToAdminSerializer
+        return HospitalAdminRegistrationSerializer
+    
     def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        is_existing_user = request.data.get('existing_user', False)
+        serializer_class = self.get_serializer_class()
+        serializer = serializer_class(data=request.data)
+        
         if serializer.is_valid():
             admin = serializer.save()
-            return Response({
+            
+            response_data = {
                 "message": "Hospital admin registered successfully! 🏥✨",
                 "admin": {
                     "email": admin.email,
@@ -676,7 +685,13 @@ class HospitalAdminRegistrationView(generics.CreateAPIView):
                     "hospital": admin.hospital.name,
                     "position": admin.position
                 }
-            }, status=status.HTTP_201_CREATED)
+            }
+            
+            if is_existing_user:
+                response_data["admin"]["existing_user_converted"] = True
+                
+            return Response(response_data, status=status.HTTP_201_CREATED)
+            
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class AppointmentViewSet(viewsets.ModelViewSet):
@@ -1254,4 +1269,38 @@ def hospital_list(request):
     serializer = HospitalSerializer(hospitals, many=True)
     return Response({
         'hospitals': serializer.data
+    })
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def check_user_exists(request):
+    """
+    Check if a user exists by email and if they're already a hospital admin.
+    This is used in the hospital admin registration flow for converting existing users.
+    
+    Query params:
+    - email: The email to check
+    
+    Returns:
+    {
+        "exists": true/false,
+        "is_admin": true/false
+    }
+    """
+    email = request.query_params.get('email')
+    if not email:
+        return Response({
+            "error": "Email parameter is required"
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    user_exists = CustomUser.objects.filter(email=email).exists()
+    is_admin = False
+    
+    if user_exists:
+        user = CustomUser.objects.get(email=email)
+        is_admin = hasattr(user, 'hospital_admin_profile')
+    
+    return Response({
+        "exists": user_exists,
+        "is_admin": is_admin
     })

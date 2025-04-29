@@ -12,7 +12,8 @@ from api.views import (
     HospitalLocationViewSet,
     hospital_registration,
     AppointmentViewSet,
-    has_primary_hospital
+    has_primary_hospital,
+    check_user_exists
 )
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -33,28 +34,58 @@ urlpatterns = [
     path('password/reset/confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
     path('onboarding/update/', UpdateOnboardingStatusView.as_view(), 
          name='update-onboarding-status'),
-    # Hospital registration endpoints
+    
+    # ============= HOSPITAL REGISTRATION ENDPOINTS =============
+    # IMPORTANT: These endpoints are for users to register with EXISTING hospitals.
+    # They do NOT create new hospitals. Hospitals must be pre-created in the system.
+    
+    # Register a user with an existing hospital - requires hospital_id in the request
+    # POST data should include hospital ID, not hospital creation data
     path('hospitals/register/', 
          HospitalRegistrationViewSet.as_view({'post': 'create'}), 
          name='hospital-register'),
     
+    # Get all hospitals that the current user is registered with
+    # Returns empty list if user has no registrations
     path('hospitals/registrations/', 
          UserHospitalRegistrationsView.as_view(), 
          name='user-hospital-registrations'),
     
+    # Set primary hospital endpoint -- This is the endpoint for the users to set their primary hospital.
+    # Users must be registered with the hospital first before setting it as primary
     path('hospitals/<int:hospital_id>/set-primary/', 
          SetPrimaryHospitalView.as_view(), 
          name='set-primary-hospital'),
+    
+    # Approve hospital registration endpoint -- This is the endpoint for the hospital admins to approve the hospital registrations.
+    # Only hospital admins can approve registrations for their own hospital
     path('hospitals/registrations/<int:registration_id>/approve/',
          ApproveHospitalRegistrationView.as_view(),
          name='approve-hospital-registration'),
+    
+    # Hospital admin registration endpoint -- This is the endpoint for the users to register as a hospital admin.
+    # Can convert existing users to admins using existing_user=True and user_email parameters
     path('hospitals/admin/register/', 
          HospitalAdminRegistrationView.as_view(), 
          name='hospital-admin-register'),
+    
+    # Check user exists endpoint -- This is the endpoint for the users to check if a user exists by email and if they're already a hospital admin.
+    path('hospitals/admin/check-user/', 
+         check_user_exists,
+         name='check-user-exists'),
+    
+    # Hospital list endpoint -- This is the endpoint for the users to get the list of hospitals.
+    # Returns all available pre-existing hospitals in the system
     path('hospitals/', hospital_list, name='hospital-list'),
+    
+    # Approve registration endpoint -- This is the endpoint for the hospital admins to approve the hospital registrations.
     path('hospitals/pending/<int:registration_id>/', approve_registration, name='approve-registration'),
+    
+    # Has primary hospital endpoint -- This is the endpoint for the users to check if they have a primary hospital.
     path('user/has-primary-hospital/', has_primary_hospital, name='has-primary-hospital'),
+    
     path('', include(router.urls)),
+    
     path('health-check/', health_check, name='health-check'),
 ]
 

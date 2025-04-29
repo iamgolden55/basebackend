@@ -330,22 +330,162 @@ class HospitalBasicSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'city', 'state', 'country']          
 
 class HospitalAdminRegistrationSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True)
+    full_name = serializers.CharField(write_only=True, required=True, error_messages={
+        'required': 'Please provide your full name.',
+        'blank': 'Full name cannot be empty.'
+    })
+    email = serializers.EmailField(error_messages={
+        'required': 'Email address is required.',
+        'invalid': 'Please enter a valid email address.',
+        'blank': 'Email address cannot be empty.'
+    })
+    password = serializers.CharField(write_only=True, error_messages={
+        'required': 'Password is required.',
+        'blank': 'Password cannot be empty.'
+    })
+    date_of_birth = serializers.DateField(required=True, error_messages={
+        'required': 'Date of birth is required.',
+        'invalid': 'Please enter a valid date.'
+    })
+    gender = serializers.CharField(required=True, error_messages={
+        'required': 'Gender is required.',
+        'blank': 'Gender cannot be empty.'
+    })
+    phone = serializers.CharField(required=True, error_messages={
+        'required': 'Phone number is required.',
+        'blank': 'Phone number cannot be empty.',
+        'invalid': 'Please enter a valid phone number.'
+    })
+    country = serializers.CharField(required=True, error_messages={
+        'required': 'Country is required.',
+        'blank': 'Country cannot be empty.'
+    })
+    state = serializers.CharField(required=True, error_messages={
+        'required': 'State is required.',
+        'blank': 'State cannot be empty.'
+    })
+    city = serializers.CharField(required=True, error_messages={
+        'required': 'City is required.',
+        'blank': 'City cannot be empty.'
+    })
+    preferred_language = serializers.CharField(error_messages={
+        'invalid_choice': 'Please select a valid language.',
+        'required': 'Preferred language is required.'
+    })
+    secondary_languages = serializers.ListField(
+        child=serializers.CharField(error_messages={
+            'invalid_choice': 'Please enter a valid language.',
+            'required': 'Secondary language is required.'
+        }),
+        error_messages={
+            'required': 'Secondary languages are required.'
+        }
+    )
+    custom_language = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        error_messages={
+            'invalid': 'Please enter a valid language name.'
+        }
+    )
+    consent_terms = serializers.BooleanField(error_messages={
+        'required': 'You must accept the terms and conditions.',
+        'invalid': 'You must accept the terms and conditions.'
+    })
+    consent_hipaa = serializers.BooleanField(error_messages={
+        'required': 'You must accept the HIPAA acknowledgment.',
+        'invalid': 'You must accept the HIPAA acknowledgment.'
+    })
+    consent_data_processing = serializers.BooleanField(error_messages={
+        'required': 'You must accept the data processing consent.',
+        'invalid': 'You must accept the data processing consent.'
+    })
     
     class Meta:
         model = HospitalAdmin
-        fields = ['email', 'name', 'hospital', 'position', 'password']
+        fields = [
+            'email', 'password', 'full_name', 'date_of_birth', 'gender', 
+            'phone', 'country', 'state', 'city', 'preferred_language', 
+            'secondary_languages', 'custom_language', 'consent_terms', 
+            'consent_hipaa', 'consent_data_processing', 'hospital', 'position'
+        ]
         
     def create(self, validated_data):
-        # Create the HospitalAdmin instance directly
+        # Extract user data from validated_data
+        full_name = validated_data.pop('full_name', '')
+        name_parts = full_name.split()
+        first_name = name_parts[0]
+        last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+        
+        # Create the HospitalAdmin instance with all required fields
         admin = HospitalAdmin(
             email=validated_data['email'],
-            name=validated_data['name'],
+            name=full_name,
             hospital=validated_data['hospital'],
             position=validated_data['position'],
-            password=validated_data['password']
+            password=validated_data['password'],
+            # Store additional user fields that will be passed to CustomUser creation
+            _user_data={
+                'first_name': first_name,
+                'last_name': last_name,
+                'date_of_birth': validated_data.get('date_of_birth'),
+                'gender': validated_data.get('gender'),
+                'phone': validated_data.get('phone'),
+                'country': validated_data.get('country'),
+                'state': validated_data.get('state'),
+                'city': validated_data.get('city'),
+                'preferred_language': validated_data.get('preferred_language'),
+                'secondary_languages': validated_data.get('secondary_languages', []),
+                'custom_language': validated_data.get('custom_language', ''),
+                'consent_terms': validated_data.get('consent_terms', False),
+                'consent_hipaa': validated_data.get('consent_hipaa', False),
+                'consent_data_processing': validated_data.get('consent_data_processing', False)
+            }
         )
         admin.save()  # This will trigger the save method that creates the CustomUser
+        return admin
+
+class ExistingUserToAdminSerializer(serializers.Serializer):
+    user_email = serializers.EmailField(required=True, error_messages={
+        'required': 'User email is required.',
+        'invalid': 'Please enter a valid email address.',
+        'blank': 'User email cannot be empty.'
+    })
+    hospital = serializers.PrimaryKeyRelatedField(
+        queryset=Hospital.objects.all(),
+        error_messages={
+            'required': 'Hospital selection is required.',
+            'does_not_exist': 'Selected hospital does not exist.',
+            'incorrect_type': 'Invalid hospital selection.'
+        }
+    )
+    position = serializers.CharField(required=True, error_messages={
+        'required': 'Position is required.',
+        'blank': 'Position cannot be empty.'
+    })
+    
+    def validate_user_email(self, value):
+        try:
+            user = CustomUser.objects.get(email=value)
+            if hasattr(user, 'hospital_admin_profile'):
+                raise serializers.ValidationError("This user is already a hospital admin")
+            return value
+        except CustomUser.DoesNotExist:
+            raise serializers.ValidationError("User with this email does not exist")
+            
+    def create(self, validated_data):
+        user = CustomUser.objects.get(email=validated_data['user_email'])
+        admin = HospitalAdmin.objects.create(
+            user=user,
+            hospital=validated_data['hospital'],
+            position=validated_data['position'],
+            email=user.email,
+            name=f"{user.first_name} {user.last_name}"
+        )
+        # Update user role
+        user.role = 'hospital_admin'
+        user.is_staff = True
+        user.save()
         return admin
 
 class HospitalLocationSerializer(serializers.ModelSerializer):
