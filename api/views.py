@@ -1344,16 +1344,35 @@ def appointment_types(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def departments(request):
-    # Filter by hospital if provided
-    hospital_id = request.query_params.get('hospital')
+    # Get the user's primary hospital registration
+    primary_registration = HospitalRegistration.objects.filter(
+        user=request.user,
+        is_primary=True,
+        status='approved'  # Only consider approved registrations
+    ).first()
     
-    if hospital_id:
-        departments = Department.objects.filter(hospital_id=hospital_id)
-    else:
-        departments = Department.objects.all()
+    if not primary_registration:
+        return Response({
+            'status': 'error',
+            'message': 'No primary hospital registration found'
+        }, status=status.HTTP_404_NOT_FOUND)
     
-    data = [{"id": dept.id, "name": dept.name, "code": dept.code} for dept in departments]
-    return Response(data)
+    # Get departments for the user's primary hospital
+    departments = Department.objects.filter(
+        hospital=primary_registration.hospital
+    ).order_by('name')
+    
+    data = [{
+        "id": dept.id,
+        "name": dept.name,
+        "code": dept.code,
+        "description": dept.description
+    } for dept in departments]
+    
+    return Response({
+        'status': 'success',
+        'departments': data
+    })
 
 # Add this new class for doctor assignment
 class DoctorAssignmentView(APIView):
