@@ -1,0 +1,56 @@
+import os
+import django
+import sys
+from django.utils import timezone
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'server.settings')
+django.setup()
+
+from api.models import HospitalRegistration, CustomUser
+
+# Find Nkem Gladys Eruwa's registration
+user_email = "eruwagolden55@gmail.com"
+hospital_name = "General Hospital"
+
+try:
+    # Find the registration
+    registration = HospitalRegistration.objects.filter(
+        user__email=user_email,
+        hospital__name=hospital_name,
+        status='pending'
+    ).select_related('user', 'hospital').first()
+    
+    if not registration:
+        print(f"No pending registration found for {user_email} at {hospital_name}")
+        sys.exit(1)
+    
+    # Display registration details before approval
+    print(f"\nFound registration for {registration.user.first_name} {registration.user.last_name}")
+    print(f"Hospital: {registration.hospital.name}")
+    print(f"Status: {registration.status}")
+    print(f"Registration date: {registration.created_at}")
+    
+    # Approve the registration
+    registration.status = 'approved'
+    registration.approved_date = timezone.now()
+    registration.save()
+    
+    print(f"\nRegistration APPROVED successfully!")
+    print(f"New status: {registration.status}")
+    print(f"Approval date: {registration.approved_date}")
+    
+    # Check if this is the user's only approved registration
+    other_approved = HospitalRegistration.objects.filter(
+        user=registration.user,
+        status='approved'
+    ).exclude(id=registration.id).exists()
+    
+    # Set as primary if it's the only approved registration
+    if not other_approved and not registration.is_primary:
+        registration.is_primary = True
+        registration.save()
+        print("\nThis is now set as the user's primary hospital")
+    
+except Exception as e:
+    print(f"Error: {str(e)}")
+    sys.exit(1) 

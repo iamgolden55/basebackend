@@ -9,6 +9,7 @@ from api.models.medical.hospital import Hospital
 from datetime import timedelta, date, datetime
 import numpy as np
 from api.models.medical.hospital_registration import HospitalRegistration
+from api.models.medical.appointment_fee import AppointmentFee
 
 class TestMLDoctorAssignment(TestCase):
     def setUp(self):
@@ -157,13 +158,25 @@ class TestMLDoctorAssignment(TestCase):
         
         # Set appointment time to 2 PM on next Monday
         appointment_time = timezone.now().time().replace(hour=14, minute=0)  # 2 PM
+        
+        # Create appointment fee
+        self.appointment_fee = AppointmentFee.objects.create(
+            hospital=self.hospital,
+            department=self.department,
+            fee_type='general',
+            base_fee=100.00,
+            currency='NGN',
+            valid_from=timezone.now().date()
+        )
+        
         self.appointment_data = {
             'patient': self.patient,
             'department': self.department,
             'hospital': self.hospital,
-            'appointment_type': 'regular',
+            'appointment_type': 'first_visit',
             'priority': 'normal',
-            'appointment_date': timezone.make_aware(datetime.combine(next_monday, appointment_time))
+            'appointment_date': timezone.make_aware(datetime.combine(next_monday, appointment_time)),
+            'fee': self.appointment_fee
         }
     
     def test_doctor_assignment_without_training(self):
@@ -211,17 +224,37 @@ class TestMLDoctorAssignment(TestCase):
         """Test doctor assignment considering workload"""
         # Create some existing appointments for doctor1
         appointment_date = self.appointment_data['appointment_date']
+        
+        # Create separate patients for each appointment to avoid validation error
         for hour in range(9, 14):  # Create appointments from 9 AM to 1 PM
+            # Create a unique patient for each appointment
+            patient_user = CustomUser.objects.create(
+                username=f"workload_patient_{hour}",
+                email=f"workload_patient_{hour}@test.com",
+                first_name=f"Workload",
+                last_name=f"Patient{hour}",
+                role="patient"
+            )
+            
+            # Register the patient with the hospital
+            HospitalRegistration.objects.create(
+                user=patient_user,
+                hospital=self.hospital,
+                status='approved',
+                is_primary=True
+            )
+            
             Appointment.objects.create(
-                patient=self.patient,
+                patient=patient_user,  # Use unique patient
                 doctor=self.doctor1,
                 hospital=self.hospital,
                 department=self.department,
-                appointment_type='regular',
+                appointment_type='first_visit',
                 priority='normal',
                 appointment_date=appointment_date.replace(hour=hour),
                 chief_complaint='Regular checkup',
-                status='confirmed'
+                status='confirmed',
+                fee=self.appointment_fee
             )
         
         # Create appointment data for 2 PM
@@ -344,11 +377,12 @@ class TestMLDoctorAssignment(TestCase):
             'patient': self.patient,
             'hospital': self.hospital,
             'department': self.department,
-            'appointment_type': 'emergency',
+            'appointment_type': 'consultation',  # Changed from 'emergency' to a valid type
             'priority': 'emergency',
             'appointment_date': timezone.now() + timedelta(days=1),
             'chief_complaint': 'Emergency heart condition',
-            'status': 'confirmed'
+            'status': 'confirmed',
+            'fee': self.appointment_fee  # Add fee
         }
         
         # Get assigned doctor first

@@ -417,31 +417,33 @@ class HospitalAdminRegistrationSerializer(serializers.ModelSerializer):
         first_name = name_parts[0]
         last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
         
-        # Create the HospitalAdmin instance with all required fields
+        # Create the HospitalAdmin instance with required fields only
         admin = HospitalAdmin(
             email=validated_data['email'],
             name=full_name,
             hospital=validated_data['hospital'],
             position=validated_data['position'],
-            password=validated_data['password'],
-            # Store additional user fields that will be passed to CustomUser creation
-            _user_data={
-                'first_name': first_name,
-                'last_name': last_name,
-                'date_of_birth': validated_data.get('date_of_birth'),
-                'gender': validated_data.get('gender'),
-                'phone': validated_data.get('phone'),
-                'country': validated_data.get('country'),
-                'state': validated_data.get('state'),
-                'city': validated_data.get('city'),
-                'preferred_language': validated_data.get('preferred_language'),
-                'secondary_languages': validated_data.get('secondary_languages', []),
-                'custom_language': validated_data.get('custom_language', ''),
-                'consent_terms': validated_data.get('consent_terms', False),
-                'consent_hipaa': validated_data.get('consent_hipaa', False),
-                'consent_data_processing': validated_data.get('consent_data_processing', False)
-            }
+            password=validated_data['password']
         )
+        
+        # Set the _user_data attribute after initialization
+        admin._user_data = {
+            'first_name': first_name,
+            'last_name': last_name,
+            'date_of_birth': validated_data.get('date_of_birth'),
+            'gender': validated_data.get('gender'),
+            'phone': validated_data.get('phone'),
+            'country': validated_data.get('country'),
+            'state': validated_data.get('state'),
+            'city': validated_data.get('city'),
+            'preferred_language': validated_data.get('preferred_language'),
+            'secondary_languages': validated_data.get('secondary_languages', []),
+            'custom_language': validated_data.get('custom_language', ''),
+            'consent_terms': validated_data.get('consent_terms', False),
+            'consent_hipaa': validated_data.get('consent_hipaa', False),
+            'consent_data_processing': validated_data.get('consent_data_processing', False)
+        }
+        
         admin.save()  # This will trigger the save method that creates the CustomUser
         return admin
 

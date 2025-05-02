@@ -531,4 +531,14 @@ class Appointment(TimestampedModel):
             'is_insurance_based': self.is_insurance_based,
             'is_upcoming': self.is_upcoming,
             'can_be_cancelled': self.can_be_cancelled
-        } 
+        }
+
+class AppointmentType(models.Model):
+    id = models.CharField(max_length=50, primary_key=True)  # e.g., "first_visit"
+    name = models.CharField(max_length=100)  # e.g., "First Visit"
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    hospital = models.ForeignKey('Hospital', on_delete=models.CASCADE, null=True, blank=True)  # Optional - for hospital-specific types
+    
+    def __str__(self):
+        return self.name 

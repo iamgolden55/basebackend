@@ -13,7 +13,11 @@ from api.views import (
     hospital_registration,
     AppointmentViewSet,
     has_primary_hospital,
-    check_user_exists
+    check_user_exists,
+    appointment_types,
+    departments,
+    DoctorAssignmentView,
+    pending_hospital_registrations,
 )
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -84,9 +88,19 @@ urlpatterns = [
     # Has primary hospital endpoint -- This is the endpoint for the users to check if they have a primary hospital.
     path('user/has-primary-hospital/', has_primary_hospital, name='has-primary-hospital'),
     
+    # Get all hospitals with pending user registrations - admin/staff only
+    path('hospitals/pending-registrations/', 
+         pending_hospital_registrations, 
+         name='pending-hospital-registrations'),
+    
     path('', include(router.urls)),
     
     path('health-check/', health_check, name='health-check'),
+    
+    # New endpoints for appointment booking
+    path('appointment-types/', appointment_types, name='appointment-types'),
+    path('departments/', departments, name='departments'),
+    path('doctor-assignment/', DoctorAssignmentView.as_view(), name='doctor-assignment'),
 ]
 
 # Available endpoints:

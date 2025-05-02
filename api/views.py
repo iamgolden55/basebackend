@@ -40,6 +40,9 @@ from django.utils.dateparse import parse_date
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
+from api.models.medical.appointment import AppointmentType
+from api.models.medical.department import Department
+from api.models.medical.doctor_assignment import MLDoctorAssignment
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -80,6 +83,12 @@ class UserRegistrationView(generics.CreateAPIView):
 
     def create(self, request, *args, **kwargs):
         try:
+            # Log the incoming request data (mask the password for security)
+            log_data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+            if 'password' in log_data:
+                log_data['password'] = '********'
+            print(f"[Registration] Received data: {log_data}")
+            
             # Format the consents data if it's nested
             if 'consents' in request.data:
                 consents = request.data.pop('consents')
@@ -96,6 +105,10 @@ class UserRegistrationView(generics.CreateAPIView):
                         formatted_errors[field] = errors[0]  # Get the first error message
                     else:
                         formatted_errors[field] = errors
+                
+                # Log the validation errors
+                print(f"[Registration] Validation errors: {serializer.errors}")
+                print(f"[Registration] Required fields: {UserSerializer.Meta.fields}")
 
                 return Response({
                     'status': 'error',
@@ -126,11 +139,15 @@ class UserRegistrationView(generics.CreateAPIView):
             if not email_sent:
                 response_data['email_error'] = 'Failed to send verification email. Please contact support.'
 
+            print(f"[Registration] User created successfully: {user.email}")
             return Response(response_data, status=status.HTTP_201_CREATED)
 
         except Exception as e:
             # Log the error for debugging
             logger.error(f"Registration error: {str(e)}")
+            print(f"[Registration] Error: {str(e)}")
+            import traceback
+            print(f"[Registration] Traceback: {traceback.format_exc()}")
             return Response({
                 'status': 'error',
                 'message': 'An unexpected error occurred during registration.',
@@ -1304,3 +1321,390 @@ def check_user_exists(request):
         "exists": user_exists,
         "is_admin": is_admin
     })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def appointment_types(request):
+    # Filter by hospital if provided
+    hospital_id = request.query_params.get('hospital')
+    
+    if hospital_id:
+        # Get hospital-specific types + global types (where hospital is null)
+        types = AppointmentType.objects.filter(
+            Q(hospital_id=hospital_id) | Q(hospital__isnull=True),
+            is_active=True
+        )
+    else:
+        # Get all active types
+        types = AppointmentType.objects.filter(is_active=True)
+    
+    data = [{"id": type.id, "name": type.name, "description": type.description} for type in types]
+    return Response(data)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def departments(request):
+    # Filter by hospital if provided
+    hospital_id = request.query_params.get('hospital')
+    
+    if hospital_id:
+        departments = Department.objects.filter(hospital_id=hospital_id)
+    else:
+        departments = Department.objects.all()
+    
+    data = [{"id": dept.id, "name": dept.name, "code": dept.code} for dept in departments]
+    return Response(data)
+
+# Add this new class for doctor assignment
+class DoctorAssignmentView(APIView):
+    """
+    API endpoint for doctor assignment based on department, hospital, and appointment details.
+    This endpoint allows finding available time slots without exposing individual doctor names.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        # Log incoming request data for debugging
+        print(f"DoctorAssignment received data: {request.data}")
+        data = request.data
+        
+        try:
+            # Extract data from request - accepting frontend parameter names
+            # Fix: We're now using the variable names that match the frontend
+            department_id = data.get('department')
+            appointment_type = data.get('appointment_type')
+            appointment_date = data.get('preferred_date')
+            hospital_id = data.get('hospital')
+            
+            # These are additional parameters from frontend that we'll accept but not require
+            chief_complaint = data.get('chief_complaint')
+            priority = data.get('priority')
+            preferred_language = data.get('preferred_language')
+            
+            print(f"Extracted fields: department={department_id}, "
+                  f"appointment_type={appointment_type}, "
+                  f"preferred_date={appointment_date}, "
+                  f"hospital={hospital_id}, "
+                  f"chief_complaint={chief_complaint}, "
+                  f"priority={priority}, "
+                  f"preferred_language={preferred_language}")
+            
+            # Validate required fields
+            missing_fields = []
+            if not department_id:
+                missing_fields.append('department')
+            if not appointment_type:
+                missing_fields.append('appointment_type')
+            if not appointment_date:
+                missing_fields.append('preferred_date')
+                
+            if missing_fields:
+                error_msg = f"Missing required fields: {', '.join(missing_fields)}"
+                print(f"Validation error: {error_msg}")
+                return Response({
+                    'status': 'error',
+                    'message': error_msg
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Parse appointment date
+            try:
+                if isinstance(appointment_date, str):
+                    # Convert to datetime if it's a string
+                    parsed_date = parse_date(appointment_date)
+                    if not parsed_date:
+                        raise ValueError(f"Invalid date format: {appointment_date}")
+                    appointment_date = parsed_date
+                    print(f"Parsed preferred_date: {appointment_date}")
+            except Exception as e:
+                error_msg = f"Invalid date format: {str(e)}"
+                print(f"Date parsing error: {error_msg}")
+                return Response({
+                    'status': 'error',
+                    'message': error_msg
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get user's primary hospital if hospital_id is not provided
+            if not hospital_id:
+                print(f"No hospital provided, looking for hospitals for user {request.user.id}")
+                
+                # First try to get primary approved hospital
+                hospital_registration = HospitalRegistration.objects.filter(
+                    user=request.user, 
+                    is_primary=True,
+                    status='approved'
+                ).first()
+                
+                if not hospital_registration:
+                    # If no primary approved hospital, try to get any approved hospital
+                    hospital_registration = HospitalRegistration.objects.filter(
+                        user=request.user,
+                        status='approved'
+                    ).first()
+                
+                if not hospital_registration:
+                    # If no approved hospital, check if there are any pending registrations
+                    pending_registration = HospitalRegistration.objects.filter(
+                        user=request.user,
+                        status='pending'
+                    ).exists()
+                    
+                    if pending_registration:
+                        error_msg = 'You have pending hospital registrations. Please wait for approval or contact admin.'
+                    else:
+                        # Check if user has any hospital registrations at all
+                        any_registration = HospitalRegistration.objects.filter(
+                            user=request.user
+                        ).exists()
+                        
+                        if any_registration:
+                            error_msg = 'None of your hospital registrations are approved. Please contact admin.'
+                        else:
+                            error_msg = 'You are not registered with any hospital. Please register with a hospital first.'
+                    
+                    print(f"Hospital error: {error_msg}")
+                    return Response({
+                        'status': 'error',
+                        'message': error_msg
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                hospital_id = hospital_registration.hospital.id
+                print(f"Using hospital: {hospital_id} ({hospital_registration.hospital.name})")
+                
+                # For debugging
+                print(f"All hospital registrations for user {request.user.id}:")
+                all_registrations = HospitalRegistration.objects.filter(user=request.user)
+                for reg in all_registrations:
+                    print(f"  - Hospital: {reg.hospital.name}, Primary: {reg.is_primary}, Status: {reg.status}")
+            
+            # Validate department exists in the hospital
+            try:
+                department = Department.objects.get(id=department_id)
+                print(f"Found department: {department.name}")
+            except Department.DoesNotExist:
+                error_msg = f'Department not found with ID: {department_id}'
+                print(f"Department error: {error_msg}")
+                return Response({
+                    'status': 'error',
+                    'message': error_msg
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Validate appointment type
+            try:
+                appointment_type_obj = AppointmentType.objects.get(id=appointment_type)
+                print(f"Found appointment type: {appointment_type_obj.name}")
+            except AppointmentType.DoesNotExist:
+                # Try with lowercase ID or by name
+                try:
+                    # Try first by name match
+                    appointment_type_obj = AppointmentType.objects.filter(
+                        name__iexact=appointment_type
+                    ).first()
+                    
+                    if not appointment_type_obj:
+                        # Then try by ID case-insensitive
+                        appointment_type_obj = AppointmentType.objects.filter(
+                            id__iexact=appointment_type
+                        ).first()
+                        
+                    if not appointment_type_obj:
+                        raise AppointmentType.DoesNotExist()
+                        
+                    print(f"Found appointment type using alternative method: {appointment_type_obj.name}")
+                except:
+                    error_msg = f'Invalid appointment type: {appointment_type}'
+                    print(f"Appointment type error: {error_msg}")
+                    return Response({
+                        'status': 'error',
+                        'message': error_msg
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Find available doctors in this department at this hospital
+            doctors = Doctor.objects.filter(
+                department_id=department_id,
+                hospital_id=hospital_id
+            )
+            
+            print(f"Found {doctors.count()} doctors in department {department_id} at hospital {hospital_id}")
+            
+            if not doctors.exists():
+                error_msg = f'No doctors available in department {department.name}'
+                print(f"Doctors error: {error_msg}")
+                return Response({
+                    'status': 'error',
+                    'message': error_msg
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Find available time slots for the given date
+            available_slots = []
+            
+            # Business hours (9am to 5pm)
+            start_hour = 9
+            end_hour = 17
+            
+            print(f"Generating time slots for date: {appointment_date}")
+            
+            # Generate all possible slots
+            for hour in range(start_hour, end_hour):
+                for minute in [0, 30]:  # 30-minute slots
+                    slot_time = f"{hour:02d}:{minute:02d}"
+                    
+                    # Create a datetime for this slot
+                    slot_datetime = datetime.combine(
+                        appointment_date, 
+                        datetime.strptime(slot_time, "%H:%M").time(),
+                        tzinfo=timezone.get_current_timezone()
+                    )
+                    
+                    # Skip slots in the past
+                    if slot_datetime < timezone.now():
+                        print(f"Skipping past time slot: {slot_time}")
+                        continue
+                    
+                    # Check if any doctor is available at this time
+                    slot_available = False
+                    for doctor in doctors:
+                        # Check if the doctor has an existing appointment at this time
+                        conflicting_appointment = Appointment.objects.filter(
+                            doctor=doctor,
+                            appointment_date=slot_datetime,
+                            status__in=['scheduled', 'confirmed', 'checking_in']
+                        ).exists()
+                        
+                        if not conflicting_appointment:
+                            # This doctor is available at this time slot
+                            slot_available = True
+                            print(f"Doctor {doctor.user.id} is available at {slot_time}")
+                            break
+                    
+                    if slot_available:
+                        available_slots.append({
+                            'time': slot_time,
+                            'datetime': slot_datetime.isoformat()
+                        })
+            
+            print(f"Generated {len(available_slots)} available time slots")
+            
+            response_data = {
+                'status': 'success',
+                'department': {
+                    'id': department.id,
+                    'name': department.name
+                },
+                'appointment_type': {
+                    'id': appointment_type_obj.id,
+                    'name': appointment_type_obj.name
+                },
+                'preferred_date': appointment_date.isoformat() if hasattr(appointment_date, 'isoformat') else appointment_date,
+                'available_slots': available_slots
+            }
+            
+            print(f"Returning {len(available_slots)} available slots")
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            import traceback
+            error_msg = f"Error in doctor assignment: {str(e)}\n{traceback.format_exc()}"
+            print(error_msg)
+            logger.error(error_msg)
+            return Response({
+                'status': 'error',
+                'message': str(e),
+                'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def pending_hospital_registrations(request):
+    """
+    Lists all hospitals with pending user registrations.
+    - Admin/staff users can see all hospitals with pending registrations
+    - Hospital admins can see pending registrations for their own hospital
+    - Regular users cannot access this endpoint
+    """
+    # Check permissions
+    is_admin = request.user.is_staff or request.user.is_superuser
+    is_hospital_admin = request.user.role == 'hospital_admin'
+    
+    if not (is_admin or is_hospital_admin):
+        return Response({
+            'error': 'You do not have permission to view pending registrations'
+        }, status=status.HTTP_403_FORBIDDEN)
+    
+    # For hospital admins, only show their hospital
+    if is_hospital_admin and not is_admin:
+        # Get the admin's hospital
+        try:
+            admin_hospital = request.user.hospital_admin_profile.hospital
+            
+            # Get pending registrations for this hospital
+            pending_registrations = HospitalRegistration.objects.filter(
+                status='pending',
+                hospital=admin_hospital
+            ).select_related('hospital', 'user')
+            
+            # Format the response
+            registrations_list = []
+            for registration in pending_registrations:
+                registrations_list.append({
+                    'id': registration.id,
+                    'user_id': registration.user.id,
+                    'user_email': registration.user.email,
+                    'user_name': f"{registration.user.first_name} {registration.user.last_name}",
+                    'registration_date': registration.created_at
+                })
+            
+            return Response({
+                'hospital': {
+                    'id': admin_hospital.id, 
+                    'name': admin_hospital.name
+                },
+                'pending_registrations': registrations_list,
+                'total_pending': len(registrations_list)
+            })
+        
+        except Exception as e:
+            return Response({
+                'error': f'Error retrieving hospital information: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    # For admin/staff, show all hospitals with pending registrations
+    else:
+        # Get all pending registrations
+        pending_registrations = HospitalRegistration.objects.filter(
+            status='pending'
+        ).select_related('hospital', 'user')
+        
+        # Group registrations by hospital
+        hospitals_with_pending = {}
+        for registration in pending_registrations:
+            hospital_id = registration.hospital.id
+            hospital_name = registration.hospital.name
+            
+            if hospital_id not in hospitals_with_pending:
+                hospitals_with_pending[hospital_id] = {
+                    'id': hospital_id,
+                    'name': hospital_name,
+                    'pending_registrations': []
+                }
+            
+            hospitals_with_pending[hospital_id]['pending_registrations'].append({
+                'id': registration.id,
+                'user_id': registration.user.id,
+                'user_email': registration.user.email,
+                'user_name': f"{registration.user.first_name} {registration.user.last_name}",
+                'registration_date': registration.created_at
+            })
+        
+        # Add count to each hospital
+        for hospital_id in hospitals_with_pending:
+            hospitals_with_pending[hospital_id]['total_pending'] = len(
+                hospitals_with_pending[hospital_id]['pending_registrations']
+            )
+        
+        return Response({
+            'hospitals_with_pending': list(hospitals_with_pending.values()),
+            'total_hospitals': len(hospitals_with_pending),
+            'total_pending_registrations': sum(
+                len(h['pending_registrations']) for h in hospitals_with_pending.values()
+            )
+        })
