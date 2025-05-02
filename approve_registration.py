@@ -8,20 +8,18 @@ django.setup()
 
 from api.models import HospitalRegistration, CustomUser
 
-# Find Nkem Gladys Eruwa's registration
-user_email = "eruwagolden55@gmail.com"
-hospital_name = "General Hospital"
+# Find registration for the specified email
+user_email = "laminu_maina@icloud.com"
 
 try:
     # Find the registration
     registration = HospitalRegistration.objects.filter(
         user__email=user_email,
-        hospital__name=hospital_name,
         status='pending'
     ).select_related('user', 'hospital').first()
     
     if not registration:
-        print(f"No pending registration found for {user_email} at {hospital_name}")
+        print(f"No pending registration found for {user_email}")
         sys.exit(1)
     
     # Display registration details before approval
