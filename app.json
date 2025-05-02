@@ -1,0 +1,28 @@
+{
+  "name": "basebackend",
+  "description": "Backend API for medical application",
+  "env": {
+    "SECRET_KEY": {
+      "description": "Django secret key",
+      "generator": "secret"
+    },
+    "ALLOWED_HOST": {
+      "description": "Allowed host for the application",
+      "value": "basebackend.herokuapp.com"
+    },
+    "DJANGO_SETTINGS_MODULE": {
+      "description": "Django settings module to use",
+      "value": "server.settings_heroku"
+    }
+  },
+  "addons": [
+    "heroku-postgresql",
+    "heroku-redis"
+  ],
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
+
