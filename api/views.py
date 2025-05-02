@@ -1344,31 +1344,41 @@ def appointment_types(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def departments(request):
-    # Get the user's primary hospital registration
-    primary_registration = HospitalRegistration.objects.filter(
-        user=request.user,
-        is_primary=True,
-        status='approved'  # Only consider approved registrations
-    ).first()
+    # Get hospital_id from query params if provided
+    hospital_id = request.query_params.get('hospital')
     
-    if not primary_registration:
-        return Response({
-            'status': 'error',
-            'message': 'No primary hospital registration found'
-        }, status=status.HTTP_404_NOT_FOUND)
+    if hospital_id:
+        # If hospital_id is provided, verify user is registered with this hospital
+        hospital_registration = HospitalRegistration.objects.filter(
+            user=request.user,
+            hospital_id=hospital_id,
+            status='approved'
+        ).first()
+        
+        if not hospital_registration:
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered with this hospital'
+            }, status=status.HTTP_403_FORBIDDEN)
+            
+        departments = Department.objects.filter(hospital_id=hospital_id)
+    else:
+        # If no hospital_id provided, get departments from user's primary hospital
+        primary_registration = HospitalRegistration.objects.filter(
+            user=request.user,
+            is_primary=True,
+            status='approved'
+        ).first()
+        
+        if not primary_registration:
+            return Response({
+                'status': 'error',
+                'message': 'No primary hospital found. Please register with a hospital first.'
+            }, status=status.HTTP_404_NOT_FOUND)
+            
+        departments = Department.objects.filter(hospital=primary_registration.hospital)
     
-    # Get departments for the user's primary hospital
-    departments = Department.objects.filter(
-        hospital=primary_registration.hospital
-    ).order_by('name')
-    
-    data = [{
-        "id": dept.id,
-        "name": dept.name,
-        "code": dept.code,
-        "description": dept.description
-    } for dept in departments]
-    
+    data = [{"id": dept.id, "name": dept.name, "code": dept.code} for dept in departments]
     return Response({
         'status': 'success',
         'departments': data
