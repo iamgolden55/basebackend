@@ -1,51 +1,48 @@
-annotated-types==0.7.0
-anyio==4.8.0
-asgiref==3.8.1
-cachetools==5.5.0
-certifi==2024.8.30
-charset-normalizer==3.4.0
-distro==1.9.0
-Django==5.0.2
-django-cors-headers==4.6.0
-django-filter==24.3
-djangorestframework==3.15.2
-djangorestframework-simplejwt==5.3.1
-google-auth==2.36.0
-google-auth-oauthlib==1.2.1
-gunicorn==23.0.0
-h11==0.14.0
-httpcore==1.0.7
-httpx==0.28.1
-idna==3.10
-jiter==0.8.2
-numpy==2.0.0
-oauthlib==3.2.2
-openai==1.61.1
-packaging==24.2
-pandas==2.2.3
-pyasn1==0.6.1
-pyasn1_modules==0.4.1
-pydantic==2.10.6
-pydantic_core==2.27.2
-PyJWT==2.10.0
-python-dateutil==2.9.0.post0
-python-dotenv==1.0.1
-pytz==2024.2
-requests>=2.31.0
-requests-oauthlib==2.0.0
-rsa==4.9
-scipy==1.15.1
+# Core Django requirements
+Django==5.0.1
+asgiref==3.7.2
+sqlparse==0.4.4
+
+# Django REST Framework
+djangorestframework==3.14.0
+djangorestframework-simplejwt==5.3.0
+django-cors-headers==4.3.1
+django-filter==23.5
+
+# Authentication and utils
+PyJWT==2.8.0
+python-dateutil==2.8.2
+python-dotenv==1.0.0
+pytz==2023.3.post1
 six==1.16.0
-sniffio==1.3.1
-sqlparse==0.5.2
-tqdm==4.67.1
-typing_extensions==4.12.2
-tzdata==2024.2
-urllib3==2.2.3
-geoip2==2.9.0
-twilio>=8.2.0
-scikit-learn==1.6.1
-redis==5.2.1
-psycopg2-binary==2.9.9
+tzdata==2023.4
+
+# HTTP and networking
+requests==2.31.0
+urllib3==2.1.0
+idna==3.6
+certifi==2023.11.17
+charset-normalizer==3.3.2
+
+# Server and deployment
+gunicorn==21.2.0
+whitenoise==6.5.0
 dj-database-url==2.1.0
-whitenoise==6.6.0
+
+# Database - using psycopg3 for better Python 3.13 compatibility
+psycopg==3.1.16
+
+# Cache and messaging
+redis==5.0.1
+
+# Essential services
+twilio==8.10.0
+geoip2==2.9.0
+
+# Removed incompatible packages
+# psycopg2-binary==2.9.9 (replaced with psycopg3)
+# django-heroku==0.3.1 (has psycopg2 dependency)
+# pydantic and related packages
+# numpy, pandas, scipy, scikit-learn
+# openai, jiter
+# google-auth related packages
