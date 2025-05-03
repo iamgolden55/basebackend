@@ -99,8 +99,12 @@ APPEND_SLASH = False
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "medic_db",
+        "USER": "medic_db",
+        "PASSWORD": "publichealth",
+        "HOST": "localhost",
+        "PORT": "5432",
     }
 }
 

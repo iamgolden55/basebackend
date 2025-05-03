@@ -1552,14 +1552,22 @@ def appointment_types(request):
     hospital_id = request.query_params.get('hospital')
     
     if hospital_id:
-        # Get hospital-specific types + global types (where hospital is null)
+        # Get hospital-specific types and global types
         types = AppointmentType.objects.filter(
-            Q(hospital_id=hospital_id) | Q(hospital__isnull=True),
+            (Q(hospital_id=hospital_id) | Q(hospital__isnull=True)),
             is_active=True
-        )
+        ).order_by('name', '-hospital_id')
+        # Deduplicate by name: prefer hospital-specific over global
+        seen = set()
+        unique_types = []
+        for t in types:
+            if t.name not in seen:
+                unique_types.append(t)
+                seen.add(t.name)
+        types = unique_types
     else:
-        # Get all active types
-        types = AppointmentType.objects.filter(is_active=True)
+        # Get all active global types only
+        types = AppointmentType.objects.filter(is_active=True, hospital__isnull=True)
     
     data = [{"id": type.id, "name": type.name, "description": type.description} for type in types]
     return Response(data)
