@@ -66,13 +66,19 @@ SECURE_HSTS_PRELOAD = True
 
 # CORS configuration - more restricted for production
 CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = [
-    # Add your frontend URLs here
-    "https://your-frontend-app.herokuapp.com",
-    os.environ.get('FRONTEND_URL', ''),
-]
-# Filter out empty strings
-CORS_ALLOWED_ORIGINS = [origin for origin in CORS_ALLOWED_ORIGINS if origin]
+
+# Parse comma-separated list of allowed origins from environment variable
+allowed_origins = []
+frontend_urls = os.environ.get('FRONTEND_URLS', '')
+if frontend_urls:
+    allowed_origins = [url.strip() for url in frontend_urls.split(',') if url.strip()]
+
+# Add any hardcoded URLs (though preferably all URLs should come from environment)
+if not allowed_origins:
+    # Fallback URLs if environment variable is not set
+    allowed_origins = ["https://your-frontend-app.vercel.app"]
+
+CORS_ALLOWED_ORIGINS = allowed_origins
 
 # Logging configuration for Heroku
 LOGGING = {
