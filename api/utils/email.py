@@ -74,28 +74,34 @@ def send_appointment_confirmation_email(appointment):
     try:
         frontend_url = os.environ.get('NEXTJS_URL', '').rstrip('/')
         
+        # Use serializer to get formatted data
+        from api.serializers import AppointmentSerializer
+        serializer = AppointmentSerializer(appointment)
+        serializer_data = serializer.data
+        
         # Patient's full name
-        patient_name = appointment.patient.get_full_name()
+        patient_name = serializer_data.get('patient_name')
         if not patient_name:
             patient_name = appointment.patient.email
-            
-        # Doctor's full name
-        doctor_name = appointment.doctor.full_name
         
         context = {
             'patient_name': patient_name,
             'appointment_id': appointment.appointment_id,
-            'doctor_name': doctor_name,
-            'department_name': appointment.department.name,
-            'hospital_name': appointment.hospital.name,
-            'appointment_date': appointment.appointment_date,
+            'doctor_name': serializer_data.get('doctor_full_name'),
+            'department_name': serializer_data.get('department_name'),
+            'hospital_name': serializer_data.get('hospital_name'),
+            'appointment_date': serializer_data.get('formatted_date_time'),
+            'appointment_date_only': serializer_data.get('formatted_date'),
+            'appointment_time_only': serializer_data.get('formatted_time'),
             'is_insurance_based': appointment.is_insurance_based,
             'payment_status': appointment.payment_status,
             'frontend_url': frontend_url,
-            'appointment_type': dict(appointment.APPOINTMENT_TYPE_CHOICES).get(appointment.appointment_type, appointment.appointment_type),
-            'priority': dict(appointment.PRIORITY_CHOICES).get(appointment.priority, appointment.priority),
+            'appointment_type': serializer_data.get('formatted_appointment_type'),
+            'priority': serializer_data.get('formatted_priority'),
             'chief_complaint': appointment.chief_complaint,
             'calendar_link_included': True,
+            'important_notes': serializer_data.get('important_notes'),
+            'duration': serializer_data.get('appointment_duration_display')
         }
         
         html_message = render_to_string('email/appointment_booking_confirmation.html', context)

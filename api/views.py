@@ -1139,6 +1139,53 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             logger.error(f"Error sending appointment confirmation: {str(e)}")
             # Don't raise the error - appointment creation should succeed even if notification fails
 
+    @action(detail=True, methods=['get'])
+    def summary(self, request, pk=None):
+        """
+        Get a detailed summary of the appointment, formatted like the email template.
+        """
+        appointment = self.get_object()
+        serializer = self.get_serializer(appointment)
+        
+        # Format data to match email template structure
+        summary_data = {
+            "appointment_details": {
+                "appointment_id": appointment.appointment_id,
+                "doctor": serializer.data.get('doctor_full_name'),
+                "date": serializer.data.get('formatted_date'),
+                "time": serializer.data.get('formatted_time'),
+                "formatted_date_time": serializer.data.get('formatted_date_time'),
+                "hospital": serializer.data.get('hospital_name'),
+                "department": serializer.data.get('department_name'),
+                "type": serializer.data.get('formatted_appointment_type'),
+                "priority": serializer.data.get('formatted_priority'),
+                "duration": f"{appointment.duration} minutes",
+                "status": serializer.data.get('status_display'),
+            },
+            "patient_details": {
+                "name": serializer.data.get('patient_name'),
+                "chief_complaint": appointment.chief_complaint,
+                "symptoms": appointment.symptoms,
+                "medical_history": appointment.medical_history,
+                "allergies": appointment.allergies,
+                "current_medications": appointment.current_medications
+            },
+            "important_notes": serializer.data.get('important_notes'),
+            "payment_info": {
+                "payment_required": appointment.payment_required,
+                "payment_status": appointment.payment_status,
+                "is_insurance_based": appointment.is_insurance_based,
+                "insurance_details": appointment.insurance_details if appointment.is_insurance_based else None
+            },
+            "additional_info": {
+                "notes": appointment.notes,
+                "created_at": appointment.created_at.strftime("%B %d, %Y at %I:%M %p") if appointment.created_at else None,
+                "updated_at": appointment.updated_at.strftime("%B %d, %Y at %I:%M %p") if appointment.updated_at else None,
+            }
+        }
+        
+        return Response(summary_data)
+
 class HospitalLocationViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet for location-based hospital search and registration.

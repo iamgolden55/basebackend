@@ -569,6 +569,16 @@ class AppointmentSerializer(serializers.ModelSerializer):
     patient_name = serializers.SerializerMethodField(read_only=True)
     status_display = serializers.SerializerMethodField(read_only=True)
     
+    # New fields to match email template format
+    formatted_date = serializers.SerializerMethodField(read_only=True)
+    formatted_time = serializers.SerializerMethodField(read_only=True)
+    formatted_date_time = serializers.SerializerMethodField(read_only=True)
+    appointment_duration_display = serializers.SerializerMethodField(read_only=True)
+    important_notes = serializers.SerializerMethodField(read_only=True)
+    formatted_appointment_type = serializers.SerializerMethodField(read_only=True)
+    formatted_priority = serializers.SerializerMethodField(read_only=True)
+    doctor_full_name = serializers.SerializerMethodField(read_only=True)
+    
     def to_internal_value(self, data):
         """
         Preprocess data before validation.
@@ -606,6 +616,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
             'appointment_id',
             'doctor', 
             'doctor_id',
+            'doctor_full_name',
             'patient',
             'patient_name',
             'hospital',
@@ -613,9 +624,15 @@ class AppointmentSerializer(serializers.ModelSerializer):
             'department',
             'department_name',
             'appointment_date',
+            'formatted_date',
+            'formatted_time',
+            'formatted_date_time',
             'duration',
+            'appointment_duration_display',
             'appointment_type',
+            'formatted_appointment_type',
             'priority',
+            'formatted_priority',
             'status',
             'status_display',
             'chief_complaint',
@@ -627,6 +644,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
             'insurance_details',
             'payment_status',
             'notes',
+            'important_notes',
             'cancellation_reason',
             'created_at',
             'updated_at'
@@ -646,6 +664,64 @@ class AppointmentSerializer(serializers.ModelSerializer):
     
     def get_status_display(self, obj):
         return dict(Appointment.STATUS_CHOICES).get(obj.status, obj.status)
+    
+    # New getter methods for formatted fields
+    def get_formatted_date(self, obj):
+        if obj.appointment_date:
+            return obj.appointment_date.strftime("%B %d, %Y")
+        return None
+    
+    def get_formatted_time(self, obj):
+        if obj.appointment_date:
+            return obj.appointment_date.strftime("%I:%M %p")
+        return None
+    
+    def get_formatted_date_time(self, obj):
+        if obj.appointment_date:
+            return obj.appointment_date.strftime("%A, %B %d, %Y at %I:%M %p")
+        return None
+    
+    def get_appointment_duration_display(self, obj):
+        return f"{obj.duration} minutes"
+    
+    def get_important_notes(self, obj):
+        notes = [
+            "Please arrive 15 minutes before your appointment time",
+            "Bring any relevant medical records or test results",
+            "If you need to cancel or reschedule, please do so at least 24 hours in advance",
+            "Wear a face mask during your visit"
+        ]
+        
+        # Add payment note if applicable
+        if obj.payment_required and obj.payment_status == 'pending':
+            notes.append("Please complete your payment to confirm the appointment")
+            
+        return notes
+    
+    def get_formatted_appointment_type(self, obj):
+        appointment_types = {
+            'first_visit': 'First Visit',
+            'follow_up': 'Follow-up',
+            'emergency': 'Emergency',
+            'consultation': 'Consultation',
+            'check_up': 'Routine Check-up',
+            'specialist': 'Specialist Consultation'
+        }
+        return appointment_types.get(obj.appointment_type, obj.appointment_type)
+    
+    def get_formatted_priority(self, obj):
+        priorities = {
+            'low': 'Low Priority',
+            'normal': 'Normal Priority',
+            'high': 'High Priority',
+            'emergency': 'Emergency'
+        }
+        return priorities.get(obj.priority, obj.priority)
+    
+    def get_doctor_full_name(self, obj):
+        if obj.doctor and obj.doctor.user:
+            return f"Dr. {obj.doctor.user.first_name} {obj.doctor.user.last_name}"
+        return None
     
     def validate(self, data):
         """
@@ -713,20 +789,34 @@ class AppointmentListSerializer(serializers.ModelSerializer):
     hospital_name = serializers.SerializerMethodField()
     department_name = serializers.SerializerMethodField()
     
+    # Add new formatted fields for list view
+    formatted_date = serializers.SerializerMethodField(read_only=True)
+    formatted_time = serializers.SerializerMethodField(read_only=True)
+    formatted_date_time = serializers.SerializerMethodField(read_only=True)
+    doctor_full_name = serializers.SerializerMethodField(read_only=True)
+    formatted_appointment_type = serializers.SerializerMethodField(read_only=True)
+    formatted_priority = serializers.SerializerMethodField(read_only=True)
+    
     class Meta:
         model = Appointment
         fields = [
             'id',
             'appointment_id',
             'doctor',
+            'doctor_full_name',
             'hospital',
             'hospital_name',
             'department',
             'department_name',
             'appointment_date',
+            'formatted_date',
+            'formatted_time',
+            'formatted_date_time',
             'duration',
             'appointment_type',
+            'formatted_appointment_type',
             'priority',
+            'formatted_priority',
             'status',
             'status_display',
             'chief_complaint',
@@ -741,6 +831,47 @@ class AppointmentListSerializer(serializers.ModelSerializer):
     
     def get_department_name(self, obj):
         return obj.department.name if obj.department else None
+    
+    # Add the same getter methods as in AppointmentSerializer
+    def get_formatted_date(self, obj):
+        if obj.appointment_date:
+            return obj.appointment_date.strftime("%B %d, %Y")
+        return None
+    
+    def get_formatted_time(self, obj):
+        if obj.appointment_date:
+            return obj.appointment_date.strftime("%I:%M %p")
+        return None
+    
+    def get_formatted_date_time(self, obj):
+        if obj.appointment_date:
+            return obj.appointment_date.strftime("%A, %B %d, %Y at %I:%M %p")
+        return None
+    
+    def get_formatted_appointment_type(self, obj):
+        appointment_types = {
+            'first_visit': 'First Visit',
+            'follow_up': 'Follow-up',
+            'emergency': 'Emergency',
+            'consultation': 'Consultation',
+            'check_up': 'Routine Check-up',
+            'specialist': 'Specialist Consultation'
+        }
+        return appointment_types.get(obj.appointment_type, obj.appointment_type)
+    
+    def get_formatted_priority(self, obj):
+        priorities = {
+            'low': 'Low Priority',
+            'normal': 'Normal Priority',
+            'high': 'High Priority',
+            'emergency': 'Emergency'
+        }
+        return priorities.get(obj.priority, obj.priority)
+    
+    def get_doctor_full_name(self, obj):
+        if obj.doctor and obj.doctor.user:
+            return f"Dr. {obj.doctor.user.first_name} {obj.doctor.user.last_name}"
+        return None
 
 class AppointmentCancelSerializer(serializers.Serializer):
     cancellation_reason = serializers.CharField(required=True)
