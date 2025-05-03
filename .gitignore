@@ -134,4 +134,7 @@ ENV/
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db *.pyc
+__pycache__/
+db.sqlite3
+
