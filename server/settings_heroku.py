@@ -76,9 +76,36 @@ if frontend_urls:
 # Add any hardcoded URLs (though preferably all URLs should come from environment)
 if not allowed_origins:
     # Fallback URLs if environment variable is not set
-    allowed_origins = ["https://your-frontend-app.vercel.app"]
+    allowed_origins = ["https://phbfrontend.vercel.app"]
 
 CORS_ALLOWED_ORIGINS = allowed_origins
+
+# Additional CORS settings
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+
+# Ensure CORS middleware is in the correct order
+if 'corsheaders.middleware.CorsMiddleware' not in MIDDLEWARE:
+    MIDDLEWARE.insert(1, 'corsheaders.middleware.CorsMiddleware')
 
 # Logging configuration for Heroku
 LOGGING = {
