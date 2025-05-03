@@ -159,8 +159,12 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
 class LoginView(APIView):
     def post(self, request):
-        # Add debugging logs
-        # print(f"Login attempt with data: {request.data}") # <-- Comment out or remove this line
+        # Add deep debug logging
+        from api.models import CustomUser
+        print(f"All users in DB: {[u.email for u in CustomUser.objects.all()]}")
+        print(f"Email received: '{request.data.get('email')}'")
+        print(f"User exists: {CustomUser.objects.filter(email=request.data.get('email')).exists()}")
+        print(f"User exists (case-insensitive): {CustomUser.objects.filter(email__iexact=request.data.get('email')).exists()}")
 
         # Log data safely, masking the password
         log_data = request.data.copy() # Create a copy to avoid modifying the original data
