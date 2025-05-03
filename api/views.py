@@ -1,7 +1,7 @@
 # Description: This file contains the views for user registration, login, email verification, and email verification token verification.
 import os
 from django.shortcuts import render, get_object_or_404
-from api.models import CustomUser, HospitalRegistration, Hospital, Appointment, Doctor
+from api.models import CustomUser, HospitalRegistration, Hospital, Appointment, Doctor, AppointmentFee
 from api.models.medical.appointment_notification import AppointmentNotification
 from rest_framework import generics, status, viewsets, filters
 from rest_framework.views import APIView
@@ -792,6 +792,185 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             return AppointmentReferSerializer
         return AppointmentSerializer
 
+    def create(self, request, *args, **kwargs):
+        """Override create method to add debug logging and fix common issues"""
+        import traceback
+        import json
+        
+        print("\n\n====================================================")
+        print("=============== APPOINTMENT CREATE DEBUG ============")
+        print("====================================================")
+        
+        # Print request data in a more readable format
+        print(f"REQUEST DATA (raw): {request.data}")
+        
+        # Try to print as formatted JSON for better readability
+        try:
+            if hasattr(request.data, '_mutable'):
+                # For QueryDict
+                data_copy = request.data.copy()
+                print(f"REQUEST DATA (pretty): {json.dumps(data_copy, indent=2, default=str)}")
+            else:
+                # For regular dict or other data types
+                print(f"REQUEST DATA (pretty): {json.dumps(request.data, indent=2, default=str)}")
+        except Exception as e:
+            print(f"Could not pretty-print request data: {e}")
+        
+        print(f"CONTENT TYPE: {request.content_type}")
+        print(f"METHOD: {request.method}")
+        print(f"USER: {request.user.id} - {request.user.email}")
+        
+        # Create a mutable copy of request.data
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        
+        # Field name mapping - Fix common field name mismatches
+        field_mapping = {
+            'department_id': 'department',
+            'doctor_id': 'doctor_id',  # Keep as is - serializer expects doctor_id
+            'fee_id': None  # Remove fee_id completely
+        }
+        
+        # Apply field name mapping
+        for frontend_field, backend_field in field_mapping.items():
+            if frontend_field in data:
+                # Only rename if backend field is different and not None
+                if backend_field and backend_field != frontend_field:
+                    data[backend_field] = data.pop(frontend_field)
+                    print(f"Mapped field {frontend_field} to {backend_field}")
+                # Remove if backend field is explicitly None
+                elif backend_field is None:
+                    data.pop(frontend_field)
+                    print(f"Removed field {frontend_field}")
+                # Otherwise, keep the field as is (e.g., doctor_id)
+                else:
+                    print(f"Kept field {frontend_field} as is")
+        
+        # CRITICAL FIX: If hospital is None, get the user's primary hospital
+        if data.get('hospital') is None:
+            try:
+                # Get user's primary hospital
+                from api.models.medical.hospital_registration import HospitalRegistration
+                primary_hospital = HospitalRegistration.objects.filter(
+                    user=request.user,
+                    is_primary=True,
+                    status='approved'
+                ).first()
+                
+                if primary_hospital:
+                    data['hospital'] = primary_hospital.hospital.id
+                    print(f"Using user's primary hospital: {primary_hospital.hospital.id} ({primary_hospital.hospital.name})")
+                else:
+                    # If no primary hospital, get any approved hospital
+                    any_hospital = HospitalRegistration.objects.filter(
+                        user=request.user,
+                        status='approved'
+                    ).first()
+                    
+                    if any_hospital:
+                        data['hospital'] = any_hospital.hospital.id
+                        print(f"Using user's approved hospital: {any_hospital.hospital.id} ({any_hospital.hospital.name})")
+                    else:
+                        print("User has no approved hospitals. Cannot proceed with appointment.")
+                        return Response(
+                            {"error": "You need to be registered with a hospital before booking appointments."},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+            except Exception as e:
+                print(f"Error getting user's hospital: {str(e)}")
+        
+        # Fix appointment_type - convert from display name to database value
+        if data.get('appointment_type') == 'First Visit':
+            data['appointment_type'] = 'first_visit'
+            print("Fixed appointment_type: 'First Visit' -> 'first_visit'")
+        elif data.get('appointment_type') == 'Follow Up':
+            data['appointment_type'] = 'follow_up'
+            print("Fixed appointment_type: 'Follow Up' -> 'follow_up'")
+        
+        # IMPORTANT FIX: If the doctor is from a different hospital than the patient's,
+        # we should use an available doctor from the patient's hospital
+        if 'doctor_id' in data and data.get('hospital') is not None:
+            try:
+                doctor = Doctor.objects.get(id=data['doctor_id'])
+                if doctor.hospital.id != data['hospital']:
+                    print(f"Doctor {doctor.id} is from hospital {doctor.hospital.id}, but patient's hospital is {data['hospital']}")
+                    
+                    # Find an available doctor from the correct hospital
+                    from django.db.models import Q
+                    available_doctors = Doctor.objects.filter(
+                        Q(department_id=data.get('department')),
+                        Q(hospital_id=data.get('hospital')),
+                        Q(is_active=True),
+                        Q(available_for_appointments=True)
+                    )
+                    
+                    if available_doctors.exists():
+                        # Use the first available doctor
+                        new_doctor = available_doctors.first()
+                        data['doctor_id'] = new_doctor.id
+                        print(f"Found available doctor {new_doctor.id} from correct hospital {data['hospital']}")
+                    else:
+                        print(f"No available doctors found in department {data.get('department')} at hospital {data['hospital']}")
+                        doctor_id = data.pop('doctor_id', None)
+                        print(f"Removed doctor_id {doctor_id} to allow auto-assignment")
+            except Doctor.DoesNotExist:
+                print(f"Doctor with ID {data.get('doctor_id')} does not exist")
+                data.pop('doctor_id', None)
+            except Exception as e:
+                print(f"Error checking doctor's hospital: {str(e)}")
+        
+        # Call parent create method but catch validation errors
+        try:
+            # Use our modified data
+            print(f"PROCESSED DATA: {data}")
+            serializer = self.get_serializer(data=data)
+            
+            # Check serializer validation
+            if not serializer.is_valid():
+                print(f"VALIDATION ERRORS: {serializer.errors}")
+                
+                # Print more specific details about each validation error
+                for field, errors in serializer.errors.items():
+                    print(f"  - Field '{field}': {errors}")
+                
+                # Create a more detailed error response
+                detailed_response = {
+                    'status': 'error',
+                    'message': 'Validation failed',
+                    'errors': serializer.errors,
+                    'data_received': {
+                        key: value for key, value in data.items() 
+                        if key not in ['password', 'token']  # Don't log sensitive data
+                    },
+                    'help': 'Check the error details for each field and ensure all required fields are provided correctly.'
+                }
+                
+                return Response(
+                    detailed_response,
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            print("SERIALIZER VALIDATED SUCCESSFULLY")
+            print(f"VALIDATED DATA: {serializer.validated_data}")
+            
+            # Continue with normal create process
+            self.perform_create(serializer)
+            headers = self.get_success_headers(serializer.data)
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        
+        except Exception as e:
+            print(f"EXCEPTION: {str(e)}")
+            print(f"EXCEPTION TYPE: {type(e).__name__}")
+            print(f"TRACEBACK: {traceback.format_exc()}")
+            
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        finally:
+            print("====================================================")
+            print("=============== END DEBUG INFO =====================")
+            print("====================================================\n\n")
+
     def perform_create(self, serializer):
         """
         Set the patient to the current user when creating an appointment
@@ -801,58 +980,52 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         if appointment_date and appointment_date < timezone.now():
             raise ValidationError("Cannot create appointments in the past.")
         
+        # No fee handling needed anymore - removing all fee-related code
+        
+        hospital = serializer.validated_data.get('hospital')
+        department = serializer.validated_data.get('department')
+        
         # Check if doctor_id is provided
         doctor = serializer.validated_data.get('doctor')
         
-        if not doctor:
-            # Prepare appointment data for ML assignment
-            appointment_data = {
-                'patient': self.request.user,
-                'department': serializer.validated_data.get('department'),
-                'hospital': serializer.validated_data.get('hospital'),
-                'appointment_type': serializer.validated_data.get('appointment_type', 'consultation'),
-                'priority': serializer.validated_data.get('priority', 'normal'),
-                'appointment_date': appointment_date
-            }
-
+        # If no doctor provided or doctor is not available, find an available doctor
+        if not doctor or not self._is_doctor_available(doctor, appointment_date):
+            if doctor:
+                print(f"Doctor {doctor.id} is not available at {appointment_date}")
+            else:
+                print(f"No doctor specified, finding available doctor")
+            
+            # Find available doctors from the user's hospital
             try:
-                # Try ML doctor assignment first
-                from api.utils.doctor_assignment import assign_doctor
-                assigned_doctor = assign_doctor(appointment_data)
-                
-                if assigned_doctor:
-                    appointment = serializer.save(
-                        patient=self.request.user,
-                        doctor=assigned_doctor
-                    )
-                else:
-                    # Fallback to availability-based assignment
-                    assigned_doctor = self._fallback_doctor_assignment(appointment_data)
-                    if not assigned_doctor:
-                        raise ValidationError("No doctors available for this appointment.")
-                    
-                    appointment = serializer.save(
-                        patient=self.request.user,
-                        doctor=assigned_doctor
-                    )
-                    
-            except ImportError:
-                # ML module not available, use fallback
-                assigned_doctor = self._fallback_doctor_assignment(appointment_data)
-                if not assigned_doctor:
-                    raise ValidationError("No doctors available for this appointment.")
-                
-                appointment = serializer.save(
-                    patient=self.request.user,
-                    doctor=assigned_doctor
+                from django.db.models import Q
+                available_doctors = Doctor.objects.filter(
+                    Q(department=department),
+                    Q(hospital=hospital),
+                    Q(is_active=True),
+                    Q(available_for_appointments=True)
                 )
                 
-        else:
-            # Validate doctor availability
-            if not self._is_doctor_available(doctor, appointment_date):
-                raise ValidationError("Doctor is not available at the requested time.")
-            
-            appointment = serializer.save(patient=self.request.user)
+                print(f"Found {available_doctors.count()} potential doctors in department {department.id} at hospital {hospital.id}")
+                
+                # Try to find an available doctor
+                doctor_found = False
+                for doc in available_doctors:
+                    if self._is_doctor_available(doc, appointment_date):
+                        doctor = doc
+                        serializer.validated_data['doctor'] = doctor
+                        print(f"Found available doctor: {doctor.id}")
+                        doctor_found = True
+                        break
+                
+                if not doctor_found:
+                    print("No available doctors found at the specified time")
+                    raise ValidationError("No doctors available at the requested time. Please choose a different time or department.")
+            except Exception as e:
+                print(f"Error finding available doctor: {str(e)}")
+                raise ValidationError(f"Error finding available doctor: {str(e)}")
+        
+        # Save the appointment - no need to set fee-related fields
+        appointment = serializer.save(patient=self.request.user)
         
         # Send confirmation (with error handling)
         try:
@@ -863,57 +1036,60 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         
         return appointment
 
-    def _fallback_doctor_assignment(self, appointment_data):
-        """
-        Fallback method for doctor assignment when ML service is unavailable
-        """
-        from api.models import Doctor
-        
-        appointment_date = appointment_data['appointment_date']
-        department = appointment_data['department']
-        hospital = appointment_data['hospital']
-        
-        # Get all active doctors in the department
-        available_doctors = Doctor.objects.filter(
-            department=department,
-            hospital=hospital,
-            is_active=True,
-            status='active',
-            available_for_appointments=True
-        )
-        
-        # Filter by availability on the appointment date
-        for doctor in available_doctors:
-            if self._is_doctor_available(doctor, appointment_date):
-                return doctor
-        
-        return None
-
     def _is_doctor_available(self, doctor, appointment_date):
         """
         Check if a doctor is available for a given appointment date
         """
+        print(f"\n--- Checking availability for Doctor {doctor.id} at {appointment_date} ---")
+        
         # Check if date is within doctor's consultation days
         day_name = appointment_date.strftime('%a')  # Get 3-letter day name
-        if day_name not in [d.strip() for d in doctor.consultation_days.split(',')]:
+        consultation_days = [d.strip() for d in doctor.consultation_days.split(',')]
+        print(f"Day of appointment: {day_name}")
+        print(f"Doctor consultation days: {consultation_days}")
+        
+        # Make the day check more flexible by ignoring case and allowing more formats
+        day_matches = any(day.lower() in day_name.lower() for day in consultation_days) or \
+                      any(day_name.lower() in day.lower() for day in consultation_days)
+                      
+        if not day_matches and day_name not in consultation_days:
+            print(f"Doctor {doctor.id} doesn't work on {day_name}")
             return False
         
         # Check if time is within consultation hours
         appointment_time = appointment_date.time()
-        if not (doctor.consultation_hours_start <= appointment_time <= doctor.consultation_hours_end):
-            return False
+        print(f"Appointment time: {appointment_time}")
+        print(f"Doctor hours: {doctor.consultation_hours_start} - {doctor.consultation_hours_end}")
+        
+        # Skip time check if consultation hours are not set
+        if doctor.consultation_hours_start is None or doctor.consultation_hours_end is None:
+            print(f"Doctor {doctor.id} has no consultation hours set, assuming available")
+        else:
+            if not (doctor.consultation_hours_start <= appointment_time <= doctor.consultation_hours_end):
+                print(f"Appointment time {appointment_time} is outside doctor's hours ({doctor.consultation_hours_start} - {doctor.consultation_hours_end})")
+                return False
         
         # Check for overlapping appointments
         appointment_end = appointment_date + timedelta(minutes=doctor.appointment_duration)
+        print(f"Appointment duration: {doctor.appointment_duration} minutes")
+        print(f"Checking for overlapping appointments between {appointment_date} and {appointment_end}")
+        
         overlapping = Appointment.objects.filter(
             doctor=doctor,
-            status__in=['pending', 'confirmed', 'in_progress'],
+            status__in=['pending', 'confirmed', 'in_progress', 'scheduled', 'checking_in'],
             appointment_date__date=appointment_date.date(),  # Only check appointments on the same day
-            appointment_date__gte=appointment_date,  # Start time is after or at the requested time
+            appointment_date__gte=appointment_date - timedelta(minutes=doctor.appointment_duration),  # Start time is before or at the requested end time
             appointment_date__lt=appointment_end  # Start time is before the end of the requested slot
-        ).exists()
+        )
         
-        return not overlapping
+        if overlapping.exists():
+            print(f"Found {overlapping.count()} overlapping appointments:")
+            for appt in overlapping:
+                print(f"  - Appointment {appt.id} at {appt.appointment_date}")
+            return False
+        
+        print(f"Doctor {doctor.id} is available at {appointment_date}")
+        return True
 
     def _send_appointment_confirmation(self, appointment):
         """
@@ -1550,7 +1726,9 @@ class DoctorAssignmentView(APIView):
             # Find available doctors in this department at this hospital
             doctors = Doctor.objects.filter(
                 department_id=department_id,
-                hospital_id=hospital_id
+                hospital_id=hospital_id,
+                is_active=True,
+                available_for_appointments=True
             )
             
             print(f"Found {doctors.count()} doctors in department {department_id} at hospital {hospital_id}")
@@ -1592,17 +1770,42 @@ class DoctorAssignmentView(APIView):
                     # Check if any doctor is available at this time
                     slot_available = False
                     for doctor in doctors:
+                        # Check if the doctor has consultation hours set
+                        if doctor.consultation_hours_start is None or doctor.consultation_hours_end is None:
+                            # If no consultation hours, assume standard working hours
+                            is_working_hours = start_hour <= slot_datetime.hour < end_hour
+                        else:
+                            # Use the doctor's defined hours
+                            doctor_time = slot_datetime.time()
+                            is_working_hours = doctor.consultation_hours_start <= doctor_time <= doctor.consultation_hours_end
+                        
+                        # Check day of week
+                        day_name = slot_datetime.strftime('%a')  # Get 3-letter day name
+                        if doctor.consultation_days:
+                            consultation_days = [d.strip() for d in doctor.consultation_days.split(',')]
+                            # Make the day check more flexible
+                            day_matches = any(day.lower() in day_name.lower() for day in consultation_days) or \
+                                         any(day_name.lower() in day.lower() for day in consultation_days) or \
+                                         day_name in consultation_days
+                        else:
+                            # If no consultation days specified, assume all days
+                            day_matches = True
+                        
+                        if not (is_working_hours and day_matches):
+                            # Skip this doctor if not working at this time
+                            continue
+                        
                         # Check if the doctor has an existing appointment at this time
                         conflicting_appointment = Appointment.objects.filter(
                             doctor=doctor,
                             appointment_date=slot_datetime,
-                            status__in=['scheduled', 'confirmed', 'checking_in']
+                            status__in=['scheduled', 'confirmed', 'checking_in', 'pending', 'in_progress']
                         ).exists()
                         
                         if not conflicting_appointment:
                             # This doctor is available at this time slot
                             slot_available = True
-                            print(f"Doctor {doctor.user.id} is available at {slot_time}")
+                            print(f"Doctor {doctor.id} is available at {slot_time}")
                             break
                     
                     if slot_available:

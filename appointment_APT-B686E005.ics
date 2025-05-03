@@ -1,0 +1,25 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//PHB Medical Appointment System//mxm.dk//
+BEGIN:VEVENT
+SUMMARY:Medical Appointment with Dr. Dr. Emily Davis
+DTSTART:20250521T113000Z
+DTEND:20250521T120000Z
+DTSTAMP:20250503T040355Z
+UID:appointment-APT-B686E005@phb.com
+DESCRIPTION:Appointment ID: APT-B686E005\nDoctor: Dr. Emily Davis\nDepartm
+ ent: Neurology\nHospital: Abuja Central Hospital\nType: First Visit\nPrior
+ ity: Normal\nChief Complaint: General checkup\n
+LOCATION:Abuja Central Hospital - Neurology Department
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+TRIGGER:-P1D
+END:VALARM
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+TRIGGER:-PT1H
+END:VALARM
+END:VEVENT
+END:VCALENDAR

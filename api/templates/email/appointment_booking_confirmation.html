@@ -71,6 +71,12 @@
                 <li>Please complete your payment to confirm the appointment</li>
                 {% endif %}
             </ul>
+            
+            {% if calendar_link_included %}
+            <div style="background-color: #f8f9fa; padding: 15px; margin: 20px 0; border-radius: 6px; border-left: 4px solid #4CAF50;">
+                <p style="margin: 0; padding: 0;"><strong>📅 Add to Calendar:</strong> We've attached a calendar file (.ics) to this email. Open this attachment to automatically add your appointment to your calendar app (Google Calendar, Outlook, Apple Calendar, etc.).</p>
+            </div>
+            {% endif %}
 
             <p>If you have any questions or need to make changes to your appointment, please contact us.</p>
             

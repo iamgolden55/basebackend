@@ -568,12 +568,36 @@ class AppointmentSerializer(serializers.ModelSerializer):
     department_name = serializers.SerializerMethodField(read_only=True)
     patient_name = serializers.SerializerMethodField(read_only=True)
     status_display = serializers.SerializerMethodField(read_only=True)
-    fee_id = serializers.PrimaryKeyRelatedField(
-        queryset=AppointmentFee.objects.all(),
-        source='fee',
-        write_only=True,
-        required=True
-    )
+    
+    def to_internal_value(self, data):
+        """
+        Preprocess data before validation.
+        Add detailed debug logging.
+        """
+        print("\n=== APPOINTMENT SERIALIZER TO_INTERNAL_VALUE ===")
+        print(f"INCOMING DATA: {data}")
+        
+        # Make a copy of the data to avoid modifying the original
+        data_dict = data.copy() if hasattr(data, 'copy') else dict(data)
+        
+        # Check for required fields and print warnings
+        required_fields = ['hospital', 'department', 'appointment_date', 'appointment_type']
+        for field in required_fields:
+            if field not in data_dict or data_dict[field] is None:
+                print(f"WARNING: Required field '{field}' is missing or null")
+        
+        # More detailed field logging
+        print("FIELD VALUES:")
+        for key, value in data_dict.items():
+            print(f"  - {key}: {value} (type: {type(value).__name__})")
+        
+        try:
+            result = super().to_internal_value(data_dict)
+            print(f"INTERNAL VALUE RESULT: {result}")
+            return result
+        except Exception as e:
+            print(f"ERROR IN to_internal_value: {e}")
+            raise
     
     class Meta:
         model = Appointment
@@ -605,9 +629,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
             'notes',
             'cancellation_reason',
             'created_at',
-            'updated_at',
-            'fee',
-            'fee_id'
+            'updated_at'
         ]
         read_only_fields = ['patient', 'appointment_id', 'created_at', 'updated_at']
     
@@ -629,16 +651,36 @@ class AppointmentSerializer(serializers.ModelSerializer):
         """
         Validate appointment data
         """
+        print("\n============ APPOINTMENT SERIALIZER VALIDATION ============")
+        print(f"DATA BEING VALIDATED: {data}")
+        
+        # List required fields that are missing
+        required_fields = ['hospital', 'department', 'appointment_date', 'appointment_type']
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            print(f"MISSING REQUIRED FIELDS: {missing_fields}")
+            error_message = f"Missing required fields: {', '.join(missing_fields)}"
+            raise serializers.ValidationError(error_message)
+        
+        # Check data types of important fields
+        print("FIELD TYPES:")
+        for field, value in data.items():
+            print(f"  - {field}: {type(value).__name__}")
+        
         # Get appointment date from data
         appointment_date = data.get('appointment_date')
+        print(f"APPOINTMENT DATE: {appointment_date}")
         
         # Check if appointment date is in the past
         if appointment_date and appointment_date < timezone.now():
+            print("ERROR: Appointment date is in the past")
             raise serializers.ValidationError("Cannot create appointments in the past.")
         
         # Check if doctor is available at the requested time
         doctor = data.get('doctor')
         if doctor and appointment_date:
+            print(f"CHECKING DOCTOR AVAILABILITY: Doctor ID {doctor.id}")
+            
             # Get appointment duration (default to 30 minutes if not provided)
             duration = data.get('duration', 30)
             
@@ -655,10 +697,14 @@ class AppointmentSerializer(serializers.ModelSerializer):
             ).exclude(id=self.instance.id if self.instance else None)
             
             if overlapping_appointments.exists():
+                print(f"ERROR: Doctor is not available at the requested time. Found {overlapping_appointments.count()} overlapping appointments")
+                for app in overlapping_appointments:
+                    print(f"  - Existing appointment: {app.id} at {app.appointment_date}")
                 raise serializers.ValidationError(
                     "Doctor is not available at the requested time. Please choose another time."
                 )
         
+        print("VALIDATION PASSED SUCCESSFULLY")
         return data
 
 class AppointmentListSerializer(serializers.ModelSerializer):

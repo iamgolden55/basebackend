@@ -1,0 +1,25 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//PHB Medical Appointment System//mxm.dk//
+BEGIN:VEVENT
+SUMMARY:Medical Appointment with Dr. Dr. Doctor Neuro
+DTSTART:20250530T163000Z
+DTEND:20250530T170000Z
+DTSTAMP:20250503T035348Z
+UID:appointment-APT-5A99C3F9@phb.com
+DESCRIPTION:Appointment ID: APT-5A99C3F9\nDoctor: Dr. Doctor Neuro\nDepart
+ ment: Neurology\nHospital: General Hospital\nType: Consultation\nPriority:
+  Normal\nChief Complaint: Test appointment for Consultation\n
+LOCATION:General Hospital - Neurology Department
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+TRIGGER:-P1D
+END:VALARM
+BEGIN:VALARM
+ACTION:DISPLAY
+DESCRIPTION:Reminder
+TRIGGER:-PT1H
+END:VALARM
+END:VEVENT
+END:VCALENDAR

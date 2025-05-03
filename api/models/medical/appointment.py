@@ -116,11 +116,12 @@ class Appointment(TimestampedModel):
         'api.AppointmentFee',
         on_delete=models.PROTECT,
         related_name='appointments',
-        null=True
+        null=True,
+        blank=True
     )
     is_insurance_based = models.BooleanField(default=False)
     insurance_details = models.JSONField(null=True, blank=True)
-    payment_required = models.BooleanField(default=True)
+    payment_required = models.BooleanField(default=False)
     payment_status = models.CharField(
         max_length=20,
         choices=[
@@ -131,7 +132,7 @@ class Appointment(TimestampedModel):
             ('insurance', 'Insurance Processing'),
             ('refunded', 'Refunded')
         ],
-        default='pending'
+        default='waived'
     )
     
     # Approval and Referral
@@ -294,6 +295,12 @@ class Appointment(TimestampedModel):
         
         # Create booking confirmation notifications if it's a new appointment
         if _is_new:
+            # Import here to avoid circular imports
+            from api.utils.email import send_appointment_confirmation_email
+            
+            # Send email confirmation
+            send_appointment_confirmation_email(self)
+            
             # Create Email Notification
             AppointmentNotification.objects.create(
                 appointment=self,
@@ -363,6 +370,31 @@ class Appointment(TimestampedModel):
         if notes:
             self.approval_notes = notes
         self.save()
+        
+        # Import here to avoid circular imports
+        from api.utils.email import send_appointment_confirmation_email
+        
+        # Send confirmation email when appointment is approved
+        send_appointment_confirmation_email(self)
+        
+        # Create notification for approval
+        from api.models.medical.appointment_notification import AppointmentNotification
+        
+        AppointmentNotification.objects.create(
+            appointment=self,
+            notification_type='email',
+            event_type='appointment_approved',
+            recipient=self.patient,
+            subject=f"Appointment Approved - {self.appointment_id}",
+            message=(
+                f"Dear {self.patient.get_full_name()},\n\n"
+                f"Your appointment with Dr. {self.doctor.user.get_full_name()} "
+                f"at {self.hospital.name} ({self.department.name}) on "
+                f"{self.appointment_date.strftime('%Y-%m-%d %H:%M')} has been approved.\n\n"
+                f"Appointment ID: {self.appointment_id}\n"
+            ),
+            template_name='appointment_confirmation'
+        )
 
     def refer(self, target_hospital, reason, referred_by):
         """Refer the appointment to another hospital"""
@@ -394,7 +426,7 @@ class Appointment(TimestampedModel):
             microsecond=0
         )
         
-        # Create new appointment at target hospital
+        # Create new appointment at target hospital - don't require fee
         new_appointment = Appointment.objects.create(
             patient=self.patient,
             hospital=target_hospital,
@@ -405,7 +437,9 @@ class Appointment(TimestampedModel):
             chief_complaint=self.chief_complaint,
             medical_history=self.medical_history,
             appointment_date=appointment_date,
-            fee=self.fee,  # Use same fee structure
+            # fee=self.fee,  # Remove fee reference
+            payment_required=False,
+            payment_status='waived',
             status='pending'
         )
         
