@@ -130,7 +130,7 @@
                     </div>
                     <h1>Already Verified ✓</h1>
                     <p class="message">Your email was already verified. You can proceed to login and access your account.</p>
-                    <a href="{{ frontend_url }}auth/login" class="button">Go to Login</a>
+                    <a href="{{ frontend_url }}/login" class="button">Go to Login</a>
 
                 {% else %}
                     <div class="status-icon error-icon">
@@ -143,7 +143,7 @@
                     <h1>Verification Failed ❌</h1>
                     <p class="message">{{ message }}</p>
                     <p class="message">Please try again or contact support if the problem persists.</p>
-                    <a href="{{ frontend_url }}auth/register" class="button">Register Again</a>
+                    <a href="{{ frontend_url }}/register" class="button">Register Again</a>
                 {% endif %}
             </div>
         </div>
