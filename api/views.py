@@ -17,7 +17,7 @@ from .serializers import (
     HospitalAdminRegistrationSerializer, HospitalSerializer, 
     HospitalLocationSerializer, NearbyHospitalSerializer,
     AppointmentSerializer, AppointmentListSerializer,
-    ExistingUserToAdminSerializer
+    ExistingUserToAdminSerializer, PatientMedicalRecordSerializer
 )
 from django.contrib.auth import authenticate
 from django.core.mail import send_mail
@@ -43,6 +43,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from api.models.medical.appointment import AppointmentType
 from api.models.medical.department import Department
 from api.models.medical.doctor_assignment import MLDoctorAssignment
+import random
+from api.models.medical.medical_record_access import MedicalRecordAccess
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -2085,3 +2087,184 @@ def doctor_appointments(request):
             'message': str(e),
             'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class RequestMedicalRecordOTPView(APIView):
+    """
+    Endpoint for requesting an OTP specifically for accessing medical records.
+    This adds an extra layer of security beyond the initial login.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        user = request.user
+        
+        # Generate a new 6-digit OTP
+        medical_record_otp = ''.join(random.choices('0123456789', k=6))
+        
+        # Store OTP and its creation time
+        user.medical_record_otp = medical_record_otp
+        user.medical_record_otp_created_at = timezone.now()
+        user.save()
+        
+        # Send OTP via email
+        subject = "Medical Record Access Code"
+        message = f"Your verification code to access medical records is: {medical_record_otp}\n\nThis code will expire in 10 minutes."
+        send_mail(
+            subject,
+            message,
+            settings.DEFAULT_FROM_EMAIL,
+            [user.email],
+            fail_silently=False,
+        )
+        
+        return Response(
+            {"message": "Medical record access code sent to your email"},
+            status=status.HTTP_200_OK
+        )
+
+class VerifyMedicalRecordOTPView(APIView):
+    """
+    Endpoint to verify the medical record-specific OTP.
+    On successful verification, grants a temporary access token for medical records.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        user = request.user
+        otp = request.data.get('otp')
+        
+        if not otp:
+            return Response(
+                {"error": "OTP is required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if OTP exists and is not expired (10 minute expiry)
+        if not hasattr(user, 'medical_record_otp') or not user.medical_record_otp:
+            return Response(
+                {"error": "No OTP requested or OTP expired. Please request a new one."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        otp_created_at = user.medical_record_otp_created_at
+        if otp_created_at and (timezone.now() - otp_created_at).total_seconds() > 600:  # 10 minutes
+            # Clear expired OTP
+            user.medical_record_otp = None
+            user.medical_record_otp_created_at = None
+            user.save()
+            return Response(
+                {"error": "OTP expired. Please request a new one."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        # Verify OTP
+        if user.medical_record_otp != otp:
+            return Response(
+                {"error": "Invalid OTP"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        # Generate a temporary medical record access token (valid for 30 minutes)
+        med_token = ''.join(random.choices('0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ', k=32))
+        user.medical_record_access_token = med_token
+        user.medical_record_token_created_at = timezone.now()
+        
+        # Clear used OTP
+        user.medical_record_otp = None
+        user.medical_record_otp_created_at = None
+        user.save()
+        
+        return Response(
+            {
+                "message": "Medical record access granted",
+                "med_access_token": med_token,
+                "expires_in": 1800  # 30 minutes in seconds
+            },
+            status=status.HTTP_200_OK
+        )
+
+class PatientMedicalRecordView(APIView):
+    """
+    Secure endpoint for patients to access their own medical records
+    Uses multiple layers of security:
+    1. Authentication required (JWT)
+    2. User can only access their own record
+    3. Additional medical record-specific verification required
+    4. Sensitive data is filtered at serializer level
+    5. All access is logged for audit purposes
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            # Verify the user has a medical record
+            if not hasattr(request.user, 'medical_record') or request.user.medical_record is None:
+                return Response(
+                    {"error": "Medical record not found"}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify medical record access token
+            med_access_token = request.headers.get('X-Med-Access-Token')
+            
+            if not med_access_token:
+                return Response(
+                    {
+                        "error": "Medical record access token required", 
+                        "code": "MED_ACCESS_REQUIRED"
+                    }, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Check if token exists and is not expired (30 minute validity)
+            if not hasattr(request.user, 'medical_record_access_token') or \
+               request.user.medical_record_access_token != med_access_token:
+                return Response(
+                    {
+                        "error": "Invalid medical record access token",
+                        "code": "INVALID_MED_ACCESS"
+                    }, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
+            token_created_at = request.user.medical_record_token_created_at
+            if token_created_at and (timezone.now() - token_created_at).total_seconds() > 1800:  # 30 minutes
+                # Clear expired token
+                request.user.medical_record_access_token = None
+                request.user.medical_record_token_created_at = None
+                request.user.save()
+                return Response(
+                    {
+                        "error": "Medical record access expired. Please verify again.",
+                        "code": "MED_ACCESS_EXPIRED"
+                    }, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Log access for audit purposes
+            MedicalRecordAccess.objects.create(
+                user=request.user,
+                access_time=timezone.now(),
+                ip_address=get_client_ip(request)
+            )
+            
+            # Return the medical record data
+            serializer = PatientMedicalRecordSerializer(request.user.medical_record)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            # Log the error
+            logger.error(f"Error accessing medical record: {str(e)}")
+            return Response(
+                {"error": "An error occurred while accessing medical records"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+# Helper function to get client IP address for audit logs
+def get_client_ip(request):
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        ip = x_forwarded_for.split(',')[0]
+    else:
+        ip = request.META.get('REMOTE_ADDR')
+    return ip

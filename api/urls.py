@@ -19,6 +19,9 @@ from api.views import (
     DoctorAssignmentView,
     pending_hospital_registrations,
     doctor_appointments,
+    PatientMedicalRecordView,
+    RequestMedicalRecordOTPView,
+    VerifyMedicalRecordOTPView,
 )
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -102,6 +105,11 @@ urlpatterns = [
     path('appointment-types/', appointment_types, name='appointment-types'),
     path('departments/', departments, name='departments'),
     path('doctor-assignment/', DoctorAssignmentView.as_view(), name='doctor-assignment'),
+    
+    # New endpoint for patient medical records - secure access
+    path('patient/medical-record/', PatientMedicalRecordView.as_view(), name='patient-medical-record'),
+    path('patient/medical-record/request-otp/', RequestMedicalRecordOTPView.as_view(), name='request-medical-record-otp'),
+    path('patient/medical-record/verify-otp/', VerifyMedicalRecordOTPView.as_view(), name='verify-medical-record-otp'),
     
     # New endpoint for doctor's appointments
     path('doctor-appointments/', doctor_appointments, name='doctor-appointments'),
