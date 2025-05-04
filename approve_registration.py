@@ -9,7 +9,7 @@ django.setup()
 from api.models import HospitalRegistration, CustomUser
 
 # Find registration for the specified email
-user_email = "eruwagolden55@gmail.com"
+user_email = "eruwagolden@gmail.com"
 
 try:
     # Find the registration
