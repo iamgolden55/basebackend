@@ -733,18 +733,40 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         """
         user = self.request.user
         
+        # Debug info
+        print(f"\n--- Appointment filtering for user ID: {user.id} ---")
+        print(f"User role: {user.role}")
+        print(f"Has doctor_profile: {hasattr(user, 'doctor_profile')}")
+        print(f"Has hospital_admin: {hasattr(user, 'hospital_admin')}")
+        
         # Base queryset with select_related for better performance
         base_qs = Appointment.objects.select_related(
             'doctor', 'doctor__user', 'hospital', 'department'
         )
         
-        # Filter based on user role
-        if hasattr(user, 'doctor_profile'):
+        # Check for view_as parameter to override default role filtering
+        view_as = self.request.query_params.get('view_as')
+        print(f"View as parameter: {view_as}")
+        
+        # Filter based on view_as parameter first, then role
+        if view_as == 'doctor' and hasattr(user, 'doctor_profile'):
+            # Explicitly show appointments where user is the doctor
             queryset = base_qs.filter(doctor=user.doctor_profile)
-        elif hasattr(user, 'hospital_admin'):
-            queryset = base_qs.filter(hospital=user.hospital_admin.hospital)
-        else:
+            print("Filtering as doctor (explicit override)")
+        elif view_as == 'patient':
+            # Explicitly show appointments where user is the patient
             queryset = base_qs.filter(patient=user)
+            print("Filtering as patient (explicit override)")
+        elif hasattr(user, 'hospital_admin'):
+            # Hospital admins see all appointments for their hospital
+            queryset = base_qs.filter(hospital=user.hospital_admin.hospital)
+            print("Filtering as hospital admin")
+        else:
+            # Default behavior: show patient appointments
+            # This is the key change - all users (including doctors) 
+            # see their patient appointments by default
+            queryset = base_qs.filter(patient=user)
+            print("Filtering as patient (default behavior)")
         
         # Apply date filters if provided
         start_date = self.request.query_params.get('start_date')
@@ -774,6 +796,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 status__in=['pending', 'confirmed', 'rescheduled']
             )
         
+        print(f"Query returned {queryset.count()} appointments")
         return queryset
 
     def get_serializer_class(self):
@@ -1995,3 +2018,70 @@ def pending_hospital_registrations(request):
                 len(h['pending_registrations']) for h in hospitals_with_pending.values()
             )
         })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def doctor_appointments(request):
+    """
+    Returns appointments where the current user is the doctor.
+    This is specifically for users who are doctors to access their professional appointments.
+    """
+    user = request.user
+    
+    try:
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered as a doctor in the system'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Get doctor's appointments
+        appointments = Appointment.objects.filter(
+            doctor=user.doctor_profile
+        ).select_related(
+            'doctor', 'doctor__user', 'hospital', 'department', 'patient'
+        ).order_by('-appointment_date')
+        
+        # Apply date filters if provided
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        
+        try:
+            if start_date:
+                start_date = timezone.make_aware(
+                    datetime.strptime(start_date, '%Y-%m-%d')
+                )
+                appointments = appointments.filter(appointment_date__gte=start_date)
+            
+            if end_date:
+                end_date = timezone.make_aware(
+                    datetime.strptime(end_date, '%Y-%m-%d')
+                ).replace(hour=23, minute=59, second=59)
+                appointments = appointments.filter(appointment_date__lte=end_date)
+                
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid date format in query params: {e}")
+        
+        # Filter by upcoming appointments if requested
+        upcoming = request.query_params.get('upcoming')
+        if upcoming and upcoming.lower() == 'true':
+            appointments = appointments.filter(
+                appointment_date__gte=timezone.now(),
+                status__in=['pending', 'confirmed', 'rescheduled']
+            )
+        
+        # Serialize the appointments
+        serializer = AppointmentListSerializer(appointments, many=True)
+        
+        return Response(serializer.data)
+    
+    except Exception as e:
+        import traceback
+        error_msg = f"Error getting doctor appointments: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

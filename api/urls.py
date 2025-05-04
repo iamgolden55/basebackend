@@ -18,6 +18,7 @@ from api.views import (
     departments,
     DoctorAssignmentView,
     pending_hospital_registrations,
+    doctor_appointments,
 )
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -101,6 +102,9 @@ urlpatterns = [
     path('appointment-types/', appointment_types, name='appointment-types'),
     path('departments/', departments, name='departments'),
     path('doctor-assignment/', DoctorAssignmentView.as_view(), name='doctor-assignment'),
+    
+    # New endpoint for doctor's appointments
+    path('doctor-appointments/', doctor_appointments, name='doctor-appointments'),
 ]
 
 # Available endpoints:
