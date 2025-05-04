@@ -2019,69 +2019,243 @@ def pending_hospital_registrations(request):
             )
         })
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def doctor_appointments(request):
+class DoctorAppointmentViewSet(viewsets.ModelViewSet):
     """
-    Returns appointments where the current user is the doctor.
-    This is specifically for users who are doctors to access their professional appointments.
-    """
-    user = request.user
+    ViewSet for managing doctor appointments 🏥
     
-    try:
+    This ViewSet provides functionality for doctors to manage their appointments,
+    including retrieving and updating appointment status.
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = AppointmentSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter, DjangoFilterBackend]
+    search_fields = ['patient__first_name', 'patient__last_name', 'chief_complaint', 'status']
+    ordering_fields = ['appointment_date', 'created_at', 'priority']
+    ordering = ['-appointment_date']
+    filterset_fields = ['status', 'appointment_type', 'priority']
+    
+    def get_queryset(self):
+        """
+        Return appointments where the current user is the doctor
+        """
+        user = self.request.user
+        
         # Check if user has a doctor profile
         if not hasattr(user, 'doctor_profile'):
-            return Response({
-                'status': 'error',
-                'message': 'You are not registered as a doctor in the system'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        # Get doctor's appointments
-        appointments = Appointment.objects.filter(
+            return Appointment.objects.none()
+            
+        # Base queryset - get doctor's appointments
+        queryset = Appointment.objects.filter(
             doctor=user.doctor_profile
         ).select_related(
             'doctor', 'doctor__user', 'hospital', 'department', 'patient'
         ).order_by('-appointment_date')
         
         # Apply date filters if provided
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
         
         try:
             if start_date:
                 start_date = timezone.make_aware(
                     datetime.strptime(start_date, '%Y-%m-%d')
                 )
-                appointments = appointments.filter(appointment_date__gte=start_date)
+                queryset = queryset.filter(appointment_date__gte=start_date)
             
             if end_date:
                 end_date = timezone.make_aware(
                     datetime.strptime(end_date, '%Y-%m-%d')
                 ).replace(hour=23, minute=59, second=59)
-                appointments = appointments.filter(appointment_date__lte=end_date)
+                queryset = queryset.filter(appointment_date__lte=end_date)
                 
         except (ValueError, TypeError) as e:
             logger.warning(f"Invalid date format in query params: {e}")
         
         # Filter by upcoming appointments if requested
-        upcoming = request.query_params.get('upcoming')
+        upcoming = self.request.query_params.get('upcoming')
         if upcoming and upcoming.lower() == 'true':
-            appointments = appointments.filter(
+            queryset = queryset.filter(
                 appointment_date__gte=timezone.now(),
                 status__in=['pending', 'confirmed', 'rescheduled']
             )
+            
+        # Filter by status if provided
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
         
-        # Serialize the appointments
-        serializer = AppointmentListSerializer(appointments, many=True)
+        logger.info(f"Doctor appointment query returned {queryset.count()} appointments")
+        return queryset
+    
+    def get_serializer_class(self):
+        """
+        Use different serializers based on the action
+        """
+        if self.action == 'list':
+            return AppointmentListSerializer
+        return AppointmentSerializer
+    
+    @action(detail=True, methods=['patch'], url_path='status')
+    def update_status(self, request, pk=None):
+        """
+        Update the status of an appointment
+        """
+        try:
+            appointment = self.get_object()
+            
+            # Validate the status
+            new_status = request.data.get('status')
+            
+            if not new_status:
+                return Response({
+                    'status': 'error',
+                    'message': 'Status field is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            if new_status not in dict(Appointment.STATUS_CHOICES):
+                return Response({
+                    'status': 'error',
+                    'message': f'Invalid status: {new_status}',
+                    'valid_statuses': dict(Appointment.STATUS_CHOICES)
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Update the status
+            old_status = appointment.status
+            appointment.status = new_status
+            
+            # Set timestamps based on the status
+            if new_status == 'completed' and old_status != 'completed':
+                appointment.completed_at = timezone.now()
+            elif new_status == 'cancelled' and old_status != 'cancelled':
+                appointment.cancelled_at = timezone.now()
+                appointment.cancellation_reason = request.data.get('cancellation_reason', 'Cancelled by doctor')
+            
+            appointment.save()
+            
+            # Return the updated appointment
+            serializer = self.get_serializer(appointment)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Error updating appointment status: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['patch'], url_path='notes')
+    def update_notes(self, request, pk=None):
+        """
+        Update notes for an appointment
+        """
+        try:
+            appointment = self.get_object()
+            
+            # Validate the notes
+            notes = request.data.get('notes')
+            
+            if notes is None:
+                return Response({
+                    'status': 'error',
+                    'message': 'Notes field is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            # Update the notes
+            appointment.notes = notes
+            appointment.save()
+            
+            # Return the updated appointment
+            serializer = self.get_serializer(appointment)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Error updating appointment notes: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'], url_path='upcoming')
+    def upcoming(self, request):
+        """
+        Return upcoming appointments for the doctor
+        """
+        queryset = self.get_queryset().filter(
+            appointment_date__gte=timezone.now(),
+            status__in=['pending', 'confirmed', 'rescheduled']
+        )
         
+        serializer = AppointmentListSerializer(queryset, many=True)
         return Response(serializer.data)
     
-    except Exception as e:
-        import traceback
-        error_msg = f"Error getting doctor appointments: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_msg)
+    @action(detail=False, methods=['get'], url_path='today')
+    def today(self, request):
+        """
+        Return today's appointments for the doctor
+        """
+        today = timezone.now().date()
+        queryset = self.get_queryset().filter(
+            appointment_date__date=today
+        )
+        
+        serializer = AppointmentListSerializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='stats')
+    def stats(self, request):
+        """
+        Return appointment statistics for the doctor
+        """
+        user = request.user
+        
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered as a doctor in the system'
+            }, status=status.HTTP_403_FORBIDDEN)
+            
+        # Get doctor's appointments
+        appointments = Appointment.objects.filter(
+            doctor=user.doctor_profile
+        )
+        
+        # Calculate statistics
+        today = timezone.now().date()
+        
+        # Total appointments
+        total = appointments.count()
+        
+        # Today's appointments
+        today_count = appointments.filter(appointment_date__date=today).count()
+        
+        # Upcoming appointments
+        upcoming_count = appointments.filter(
+            appointment_date__gte=timezone.now(),
+            status__in=['pending', 'confirmed', 'rescheduled']
+        ).count()
+        
+        # Completed appointments
+        completed_count = appointments.filter(status='completed').count()
+        
+        # Cancelled appointments
+        cancelled_count = appointments.filter(status='cancelled').count()
+        
+        # No-show appointments
+        no_show_count = appointments.filter(status='no_show').count()
+        
+        # Status distribution
+        status_counts = {}
+        for status_choice, _ in Appointment.STATUS_CHOICES:
+            status_counts[status_choice] = appointments.filter(status=status_choice).count()
+            
+        # Return statistics
         return Response({
-            'status': 'error',
-            'message': str(e),
-            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            'total_appointments': total,
+            'today_appointments': today_count,
+            'upcoming_appointments': upcoming_count,
+            'completed_appointments': completed_count,
+            'cancelled_appointments': cancelled_count,
+            'no_show_appointments': no_show_count,
+            'status_distribution': status_counts
+        })
