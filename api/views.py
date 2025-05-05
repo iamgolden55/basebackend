@@ -2178,7 +2178,7 @@ class VerifyMedicalRecordOTPView(APIView):
             {
                 "message": "Medical record access granted",
                 "med_access_token": med_token,
-                "expires_in": 1800  # 30 minutes in seconds
+                "expires_in": 900  # 15 minutes in seconds (changed from 30 minutes)
             },
             status=status.HTTP_200_OK
         )
@@ -2228,14 +2228,14 @@ class PatientMedicalRecordView(APIView):
                 )
                 
             token_created_at = request.user.medical_record_token_created_at
-            if token_created_at and (timezone.now() - token_created_at).total_seconds() > 1800:  # 30 minutes
+            if token_created_at and (timezone.now() - token_created_at).total_seconds() > 900:  # 15 minutes (changed from 30 minutes)
                 # Clear expired token
                 request.user.medical_record_access_token = None
                 request.user.medical_record_token_created_at = None
                 request.user.save()
                 return Response(
                     {
-                        "error": "Medical record access expired. Please verify again.",
+                        "error": "Medical record access expired. Please verify again after 15 minutes.",
                         "code": "MED_ACCESS_EXPIRED"
                     }, 
                     status=status.HTTP_403_FORBIDDEN
