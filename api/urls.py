@@ -1,5 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from django.views.generic import RedirectView
 from api.views import UserProfileUpdateView, PasswordResetRequestView, PasswordResetConfirmView, UpdateOnboardingStatusView
 from api.views import (
     HospitalRegistrationViewSet,
@@ -113,6 +114,22 @@ urlpatterns = [
     
     # New endpoint for doctor's appointments
     path('doctor-appointments/', doctor_appointments, name='doctor-appointments'),
+    
+    # New endpoint for doctor-appointments with appointment ID - redirects to appointments endpoint
+    path('doctor-appointments/<str:appointment_id>/', 
+         lambda request, appointment_id: RedirectView.as_view(
+             url='/api/appointments/{}/'.format(appointment_id), 
+             permanent=True
+         )(request), 
+         name='doctor-appointments-detail'),
+
+    # New endpoint for doctor-appointments status update
+    path('doctor-appointments/<str:appointment_id>/status/', 
+         lambda request, appointment_id: RedirectView.as_view(
+             url='/api/appointments/{}/status/'.format(appointment_id), 
+             permanent=True
+         )(request), 
+         name='doctor-appointments-status'),
 ]
 
 # Available endpoints:

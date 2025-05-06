@@ -45,6 +45,7 @@ from api.models.medical.department import Department
 from api.models.medical.doctor_assignment import MLDoctorAssignment
 import random
 from api.models.medical.medical_record_access import MedicalRecordAccess
+from django.http import Http404
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -728,6 +729,51 @@ class AppointmentViewSet(viewsets.ModelViewSet):
     ordering_fields = ['appointment_date', 'created_at', 'priority']
     ordering = ['-appointment_date']
     filterset_fields = ['status', 'appointment_type', 'priority', 'hospital', 'department']
+    lookup_field = 'pk'  # Default lookup field
+    lookup_value_regex = r'[0-9]+|APT-[A-Za-z0-9]+'  # Allow numeric IDs or APT-* format
+
+    def get_object(self):
+        """
+        Custom get_object method to retrieve appointments by numeric ID or appointment_id
+        """
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs[lookup_url_kwarg]
+        
+        # Check if the lookup value matches APT-* format
+        if lookup_value.startswith('APT-'):
+            # For appointment_id lookups, bypass the normal queryset filtering
+            # to allow access to appointments where user is either patient or doctor
+            user = self.request.user
+            
+            # Find appointment directly by appointment_id
+            from django.db.models import Q
+            all_appointments = Appointment.objects.filter(
+                appointment_id=lookup_value
+            ).select_related(
+                'doctor', 'doctor__user', 'hospital', 'department', 'patient'
+            )
+            
+            # Then check if user is the patient, the doctor, or a hospital admin
+            if not all_appointments.exists():
+                raise Http404(f"No appointment found with ID: {lookup_value}")
+                
+            appointment = all_appointments.first()
+            
+            # Check permissions - user must be either the patient, the doctor, or admin
+            is_patient = appointment.patient == user
+            is_doctor = hasattr(user, 'doctor_profile') and appointment.doctor == user.doctor_profile
+            is_hospital_admin = hasattr(user, 'hospital_admin') and appointment.hospital == user.hospital_admin.hospital
+            
+            if not (is_patient or is_doctor or is_hospital_admin):
+                self.permission_denied(
+                    self.request,
+                    message="You don't have permission to access this appointment"
+                )
+                
+            return appointment
+        else:
+            # Default behavior for numeric IDs
+            return super().get_object()
 
     def get_queryset(self):
         """
@@ -1210,6 +1256,73 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         }
         
         return Response(summary_data)
+        
+    @action(detail=True, methods=['patch'], url_path='status')
+    def update_status(self, request, pk=None):
+        """
+        Update just the status of an appointment.
+        
+        This is a simpler endpoint for updating appointment status without needing
+        to supply all the fields that the full update would require.
+        """
+        appointment = self.get_object()
+        
+        # Get the new status from the request data
+        new_status = request.data.get('status')
+        if not new_status:
+            return Response(
+                {'error': 'Status field is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        # Check if the status is valid
+        valid_statuses = dict(Appointment.STATUS_CHOICES).keys()
+        if new_status not in valid_statuses:
+            return Response(
+                {'error': f'Invalid status. Must be one of: {", ".join(valid_statuses)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        # Special handling for status changes
+        old_status = appointment.status
+        
+        # Check if the transition is valid
+        if not appointment._is_valid_status_transition(old_status, new_status):
+            return Response(
+                {'error': f'Invalid status transition from {old_status} to {new_status}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        # Update the status
+        try:
+            appointment.status = new_status
+            
+            # Add status-specific fields if provided
+            if new_status == 'cancelled' and 'cancellation_reason' in request.data:
+                appointment.cancellation_reason = request.data['cancellation_reason']
+                appointment.cancelled_at = timezone.now()
+                
+            elif new_status == 'confirmed':
+                appointment.approved_by = request.user
+                appointment.approval_date = timezone.now()
+                if 'approval_notes' in request.data:
+                    appointment.approval_notes = request.data['approval_notes']
+                    
+            elif new_status == 'completed':
+                appointment.completed_at = timezone.now()
+                
+            # Save the appointment
+            appointment.save(bypass_validation=True)
+            
+            # Return the updated appointment
+            serializer = self.get_serializer(appointment)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 class HospitalLocationViewSet(viewsets.ReadOnlyModelViewSet):
     """

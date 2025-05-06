@@ -279,22 +279,38 @@ class Appointment(TimestampedModel):
         if not self.appointment_id:
             self.appointment_id = self.generate_appointment_id()
             
-        # Ensure validation is performed
-        self.full_clean()
-            
-        # Update timestamps based on status
-        if self.status == 'cancelled' and not self.cancelled_at:
-            self.cancelled_at = timezone.now()
-        elif self.status == 'completed' and not self.completed_at:
-            self.completed_at = timezone.now()
-            
-        # Check if this is a new instance before saving
-        _is_new = self.pk is None 
+        # Get the old status if this is an existing appointment
+        old_status = None
+        bypass_validation = kwargs.pop('bypass_validation', False)
+        
+        if self.pk:
+            # This is an update, not a creation - get the old status
+            old_instance = Appointment.objects.filter(pk=self.pk).first()
+            if old_instance:
+                old_status = old_instance.status
+        
+        # Check for valid status transition
+        if old_status and self.status != old_status and not bypass_validation:
+            if not self._is_valid_status_transition(old_status, self.status):
+                raise ValidationError({
+                    'status': [f'Invalid status transition from {old_status} to {self.status}']
+                })
+        
+        # Update timestamp for status changes
+        if old_status and self.status != old_status:
+            if self.status == 'cancelled':
+                self.cancelled_at = timezone.now()
+            elif self.status == 'completed':
+                self.completed_at = timezone.now()
+        
+        # Full validation (skip if bypassing)
+        if not bypass_validation:
+            self.full_clean()
         
         super().save(*args, **kwargs)
         
         # Create booking confirmation notifications if it's a new appointment
-        if _is_new:
+        if self.pk is None:
             # Import here to avoid circular imports
             from api.utils.email import send_appointment_confirmation_email
             
