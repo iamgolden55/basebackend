@@ -13,6 +13,9 @@ from api.models import Appointment, Doctor, AppointmentFee
 from datetime import datetime, timedelta
 from django.utils import timezone
 
+# Import MedicalRecord model
+from api.models.medical.medical_record import MedicalRecord
+
 CustomUser = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
@@ -893,3 +896,49 @@ class AppointmentReferSerializer(serializers.Serializer):
         required=True
     )
     referral_reason = serializers.CharField(required=True)     
+
+class PatientMedicalRecordSerializer(serializers.ModelSerializer):
+    """
+    Serializer for patient-facing medical record data with appropriate data protection
+    """
+    diagnoses = serializers.SerializerMethodField()
+    treatments = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MedicalRecord
+        fields = [
+            'hpn', 
+            'blood_type', 
+            'allergies', 
+            'chronic_conditions',
+            'emergency_contact_name',
+            'emergency_contact_phone',
+            'last_visit_date',
+            'diagnoses',
+            'treatments'
+        ]
+    
+    def get_diagnoses(self, obj):
+        # Only return active diagnoses
+        diagnoses = obj.diagnoses.filter(is_active=True).order_by('-diagnosis_date')
+        return [{
+            'code': diagnosis.diagnosis_code,
+            'name': diagnosis.diagnosis_name,
+            'date': diagnosis.diagnosis_date,
+            'is_chronic': diagnosis.is_chronic,
+            'severity': diagnosis.severity_rating,
+            # Exclude notes - these are for medical staff only
+        } for diagnosis in diagnoses]
+    
+    def get_treatments(self, obj):
+        # Only return active treatments
+        treatments = obj.treatments.filter(is_active=True).order_by('-start_date')
+        return [{
+            'type': treatment.treatment_type,
+            'name': treatment.treatment_name,
+            'start_date': treatment.start_date,
+            'end_date': treatment.end_date,
+            'dosage': treatment.dosage,
+            'frequency': treatment.frequency,
+            # Exclude notes - these are for medical staff only
+        } for treatment in treatments]     
