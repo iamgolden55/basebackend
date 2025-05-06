@@ -32,7 +32,7 @@ from rest_framework.decorators import api_view, permission_classes, action
 from django.utils import timezone
 from .utils.location_utils import get_location_from_ip
 from django.conf import settings
-from .utils.email import send_verification_email, send_welcome_email, send_appointment_confirmation_email, send_appointment_status_update_email, send_appointment_reassignment_email
+from .utils.email import send_verification_email, send_welcome_email
 from api.models.medical.doctor_assignment import doctor_assigner
 from rest_framework.exceptions import ValidationError
 from datetime import datetime, timedelta
@@ -45,6 +45,7 @@ from api.models.medical.department import Department
 from api.models.medical.doctor_assignment import MLDoctorAssignment
 import random
 from api.models.medical.medical_record_access import MedicalRecordAccess
+from django.http import Http404
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -2665,4 +2666,71 @@ def get_client_ip(request):
     else:
         ip = request.META.get('REMOTE_ADDR')
     return ip
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def doctor_appointments(request):
+    """
+    Returns appointments where the current user is the doctor.
+    This is specifically for users who are doctors to access their professional appointments.
+    """
+    user = request.user
+    
+    try:
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered as a doctor in the system'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Get doctor's appointments
+        appointments = Appointment.objects.filter(
+            doctor=user.doctor_profile
+        ).select_related(
+            'doctor', 'doctor__user', 'hospital', 'department', 'patient'
+        ).order_by('-appointment_date')
+        
+        # Apply date filters if provided
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        
+        try:
+            if start_date:
+                start_date = timezone.make_aware(
+                    datetime.strptime(start_date, '%Y-%m-%d')
+                )
+                appointments = appointments.filter(appointment_date__gte=start_date)
+            
+            if end_date:
+                end_date = timezone.make_aware(
+                    datetime.strptime(end_date, '%Y-%m-%d')
+                ).replace(hour=23, minute=59, second=59)
+                appointments = appointments.filter(appointment_date__lte=end_date)
+                
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid date format in query params: {e}")
+        
+        # Filter by upcoming appointments if requested
+        upcoming = request.query_params.get('upcoming')
+        if upcoming and upcoming.lower() == 'true':
+            appointments = appointments.filter(
+                appointment_date__gte=timezone.now(),
+                status__in=['pending', 'confirmed', 'rescheduled']
+            )
+        
+        # Serialize the appointments
+        serializer = AppointmentListSerializer(appointments, many=True)
+        
+        return Response(serializer.data)
+    
+    except Exception as e:
+        import traceback
+        error_msg = f"Error getting doctor appointments: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
