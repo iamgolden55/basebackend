@@ -2423,65 +2423,67 @@ class DoctorAppointmentViewSet(viewsets.ModelViewSet):
         """
         Return appointment statistics for the doctor
         """
-        user = request.user
-        
-        # Check if user has a doctor profile
-        if not hasattr(user, 'doctor_profile'):
+        try:
+            user = request.user
+            
+            # Check if user has a doctor profile
+            if not hasattr(user, 'doctor_profile'):
+                return Response({
+                    'status': 'error',
+                    'message': 'You are not registered as a doctor in the system'
+                }, status=status.HTTP_403_FORBIDDEN)
+                
+            # Get doctor's appointments
+            appointments = Appointment.objects.filter(
+                doctor=user.doctor_profile
+            )
+            
+            # Calculate statistics
+            today = timezone.now().date()
+            
+            # Total appointments
+            total = appointments.count()
+            
+            # Today's appointments
+            today_count = appointments.filter(appointment_date__date=today).count()
+            
+            # Upcoming appointments
+            upcoming_count = appointments.filter(
+                appointment_date__gte=timezone.now(),
+                status__in=['pending', 'confirmed', 'rescheduled']
+            ).count()
+            
+            # Completed appointments
+            completed_count = appointments.filter(status='completed').count()
+            
+            # Cancelled appointments
+            cancelled_count = appointments.filter(status='cancelled').count()
+            
+            # No-show appointments
+            no_show_count = appointments.filter(status='no_show').count()
+            
+            # Status distribution
+            status_counts = {}
+            for status_choice, _ in Appointment.STATUS_CHOICES:
+                status_counts[status_choice] = appointments.filter(status=status_choice).count()
+                
+            # Return statistics
+            return Response({
+                'total_appointments': total,
+                'today_appointments': today_count,
+                'upcoming_appointments': upcoming_count,
+                'completed_appointments': completed_count,
+                'cancelled_appointments': cancelled_count,
+                'no_show_appointments': no_show_count,
+                'status_distribution': status_counts
+            })
+        except Exception as e:
+            import traceback
             return Response({
                 'status': 'error',
-                'message': 'You are not registered as a doctor in the system'
-            }, status=status.HTTP_403_FORBIDDEN)
-            
-        # Get doctor's appointments
-        appointments = Appointment.objects.filter(
-            doctor=user.doctor_profile
-        )
-        
-        # Calculate statistics
-        today = timezone.now().date()
-        
-        # Total appointments
-        total = appointments.count()
-        
-        # Today's appointments
-        today_count = appointments.filter(appointment_date__date=today).count()
-        
-        # Upcoming appointments
-        upcoming_count = appointments.filter(
-            appointment_date__gte=timezone.now(),
-            status__in=['pending', 'confirmed', 'rescheduled']
-        ).count()
-        
-        # Completed appointments
-        completed_count = appointments.filter(status='completed').count()
-        
-        # Cancelled appointments
-        cancelled_count = appointments.filter(status='cancelled').count()
-        
-        # No-show appointments
-        no_show_count = appointments.filter(status='no_show').count()
-        
-        # Status distribution
-        status_counts = {}
-        for status_choice, _ in Appointment.STATUS_CHOICES:
-            status_counts[status_choice] = appointments.filter(status=status_choice).count()
-            
-        # Return statistics
-        return Response({
-
-            'total_appointments': total,
-            'today_appointments': today_count,
-            'upcoming_appointments': upcoming_count,
-            'completed_appointments': completed_count,
-            'cancelled_appointments': cancelled_count,
-            'no_show_appointments': no_show_count,
-            'status_distribution': status_counts
-        })
-
-            'status': 'error',
-            'message': str(e),
-            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'message': str(e),
+                'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class RequestMedicalRecordOTPView(APIView):
     """
