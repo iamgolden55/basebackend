@@ -32,7 +32,7 @@ from rest_framework.decorators import api_view, permission_classes, action
 from django.utils import timezone
 from .utils.location_utils import get_location_from_ip
 from django.conf import settings
-from .utils.email import send_verification_email, send_welcome_email
+from .utils.email import send_verification_email, send_welcome_email, send_appointment_confirmation_email, send_appointment_status_update_email, send_appointment_reassignment_email
 from api.models.medical.doctor_assignment import doctor_assigner
 from rest_framework.exceptions import ValidationError
 from datetime import datetime, timedelta
@@ -1164,52 +1164,159 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             logger.error(f"Error sending appointment confirmation: {str(e)}")
             # Don't raise the error - appointment creation should succeed even if notification fails
 
-    @action(detail=True, methods=['get'])
+    @action(detail=True, methods=['get'], url_path='summary')
     def summary(self, request, pk=None):
         """
-        Get a detailed summary of the appointment, formatted like the email template.
+        Return a detailed summary of the appointment
         """
         appointment = self.get_object()
-        serializer = self.get_serializer(appointment)
+        serializer = AppointmentSerializer(appointment, context={'request': request})
         
-        # Format data to match email template structure
+        # Ensure consistent patient name formatting
+        if appointment.patient:
+            patient_name = f"{appointment.patient.first_name} {appointment.patient.last_name}"
+        else:
+            patient_name = None
+        
+        # Get appointment summary data
         summary_data = {
-            "appointment_details": {
-                "appointment_id": appointment.appointment_id,
-                "doctor": serializer.data.get('doctor_full_name'),
-                "date": serializer.data.get('formatted_date'),
-                "time": serializer.data.get('formatted_time'),
-                "formatted_date_time": serializer.data.get('formatted_date_time'),
-                "hospital": serializer.data.get('hospital_name'),
-                "department": serializer.data.get('department_name'),
-                "type": serializer.data.get('formatted_appointment_type'),
-                "priority": serializer.data.get('formatted_priority'),
-                "duration": f"{appointment.duration} minutes",
-                "status": serializer.data.get('status_display'),
-            },
-            "patient_details": {
-                "name": serializer.data.get('patient_name'),
-                "chief_complaint": appointment.chief_complaint,
-                "symptoms": appointment.symptoms,
-                "medical_history": appointment.medical_history,
-                "allergies": appointment.allergies,
-                "current_medications": appointment.current_medications
-            },
+            # Appointment details
+            "appointment_id": appointment.appointment_id,
+            "doctor": serializer.data.get('doctor_full_name'),
+            "date": serializer.data.get('formatted_date'),
+            "time": serializer.data.get('formatted_time'),
+            "formatted_date_time": serializer.data.get('formatted_date_time'),
+            "hospital": appointment.hospital.name,
+            "department": appointment.department.name,
+            "type": serializer.data.get('type') or serializer.data.get('formatted_appointment_type'),
+            "priority": serializer.data.get('formatted_priority'),
+            "duration": f"{appointment.duration} minutes",
+            "status": serializer.data.get('status_display'),
+            
+            # Patient details
+            "patient_name": patient_name,  # Use consistently formatted patient name
+            "chief_complaint": appointment.chief_complaint or "None specified",
+            "symptoms": appointment.symptoms or "None",
+            "medical_history": appointment.medical_history or "None",
+            "allergies": appointment.allergies or "None",
+            "current_medications": appointment.current_medications or "None",
+            
+            # Additional info
             "important_notes": serializer.data.get('important_notes'),
-            "payment_info": {
-                "payment_required": appointment.payment_required,
-                "payment_status": appointment.payment_status,
-                "is_insurance_based": appointment.is_insurance_based,
-                "insurance_details": appointment.insurance_details if appointment.is_insurance_based else None
-            },
-            "additional_info": {
-                "notes": appointment.notes,
-                "created_at": appointment.created_at.strftime("%B %d, %Y at %I:%M %p") if appointment.created_at else None,
-                "updated_at": appointment.updated_at.strftime("%B %d, %Y at %I:%M %p") if appointment.updated_at else None,
-            }
+            "payment_required": appointment.payment_required,
+            "payment_status": appointment.payment_status,
+            "is_insurance_based": appointment.is_insurance_based,
+            "insurance_details": appointment.insurance_details if appointment.is_insurance_based else None,
+            "notes": appointment.notes or "",
+            "created_at": appointment.created_at.strftime("%B %d, %Y at %I:%M %p") if appointment.created_at else None,
+            "updated_at": appointment.updated_at.strftime("%B %d, %Y at %I:%M %p") if appointment.updated_at else None,
         }
         
         return Response(summary_data)
+
+    @action(detail=True, methods=['patch'], url_path='status')
+    def update_status(self, request, pk=None):
+        """
+        Update the status of an appointment and send email notification to the patient
+        """
+        try:
+            appointment = self.get_object()
+            
+            # Validate the status
+            new_status = request.data.get('status')
+            
+            if not new_status:
+                return Response({
+                    'status': 'error',
+                    'message': 'Status field is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            if new_status not in dict(Appointment.STATUS_CHOICES):
+                return Response({
+                    'status': 'error',
+                    'message': f'Invalid status: {new_status}. Valid statuses are: {", ".join(dict(Appointment.STATUS_CHOICES).keys())}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle auto-reassignment for cancelled appointments
+            if new_status == 'cancelled':
+                cancellation_reason = request.data.get('cancellation_reason')
+                if not cancellation_reason:
+                    return Response({
+                        'status': 'error',
+                        'message': 'Cancellation reason is required'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Save the cancellation reason to both notes and the dedicated field
+                appointment.notes = f"Cancelled by Dr. {appointment.doctor.user.get_full_name()}. Reason: {cancellation_reason}\n\n" + (appointment.notes or "")
+                appointment.cancellation_reason = cancellation_reason
+                appointment.cancelled_at = timezone.now()
+                
+                # Find another available doctor in the same department
+                from api.models import Doctor
+                department = appointment.department
+                hospital = appointment.hospital
+                
+                # Get doctors in the same department, excluding the current one
+                alternative_doctors = Doctor.objects.filter(
+                    department=department,
+                    hospital=hospital,
+                    is_active=True
+                ).exclude(id=appointment.doctor.id)
+                
+                # If there are alternative doctors, reassign instead of cancelling
+                if alternative_doctors.exists():
+                    # Find an available doctor for this timeslot
+                    appointment_date = appointment.appointment_date
+                    available_doctor = None
+                    
+                    for doctor in alternative_doctors:
+                        # Check if this doctor is available at this time
+                        if doctor.is_available_at(appointment_date):
+                            available_doctor = doctor
+                            break
+                    
+                    if available_doctor:
+                        # Reassign to the new doctor instead of cancelling
+                        previous_doctor = appointment.doctor
+                        appointment.doctor = available_doctor
+                        appointment.status = 'pending'  # Reset to pending for the new doctor
+                        appointment.save()
+                        
+                        # Send reassignment email
+                        from api.utils.email import send_appointment_reassignment_email
+                        send_appointment_reassignment_email(appointment, previous_doctor, cancellation_reason)
+                        
+                        serializer = self.get_serializer(appointment)
+                        return Response({
+                            'status': 'success',
+                            'message': f'Appointment reassigned to Dr. {available_doctor.user.get_full_name()}',
+                            'data': serializer.data
+                        })
+                
+                # If no available doctor found, proceed with cancellation
+                appointment.status = new_status
+                appointment.save()
+            else:
+                # Regular status update
+                appointment.status = new_status
+                appointment.save()
+            
+            # Send status update email
+            from api.utils.email import send_appointment_status_update_email
+            send_appointment_status_update_email(appointment)
+            
+            serializer = self.get_serializer(appointment)
+            return Response({
+                'status': 'success',
+                'message': f'Appointment status updated to {new_status}',
+                'data': serializer.data
+            })
+        except Exception as e:
+            logger.error(f"Error updating appointment status: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class HospitalLocationViewSet(viewsets.ReadOnlyModelViewSet):
     """
@@ -1741,6 +1848,7 @@ class DoctorAssignmentView(APIView):
                             user=request.user
                         ).exists()
                         
+                        
                         if any_registration:
                             error_msg = 'None of your hospital registrations are approved. Please contact admin.'
                         else:
@@ -2021,68 +2129,355 @@ def pending_hospital_registrations(request):
             )
         })
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def doctor_appointments(request):
+class DoctorAppointmentViewSet(viewsets.ModelViewSet):
     """
-    Returns appointments where the current user is the doctor.
-    This is specifically for users who are doctors to access their professional appointments.
-    """
-    user = request.user
+    ViewSet for managing doctor appointments 🏥
     
-    try:
+    This ViewSet provides functionality for doctors to manage their appointments,
+    including retrieving and updating appointment status.
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = AppointmentSerializer
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter, DjangoFilterBackend]
+    search_fields = ['patient__first_name', 'patient__last_name', 'chief_complaint', 'status']
+    ordering_fields = ['appointment_date', 'created_at', 'priority']
+    ordering = ['-appointment_date']
+    filterset_fields = ['status', 'appointment_type', 'priority']
+    lookup_field = 'appointment_id'
+    
+    def get_queryset(self):
+        """
+        Return appointments where the current user is the doctor
+        """
+        user = self.request.user
+        
         # Check if user has a doctor profile
         if not hasattr(user, 'doctor_profile'):
-            return Response({
-                'status': 'error',
-                'message': 'You are not registered as a doctor in the system'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        # Get doctor's appointments
-        appointments = Appointment.objects.filter(
+            return Appointment.objects.none()
+            
+        # Base queryset - get doctor's appointments
+        queryset = Appointment.objects.filter(
             doctor=user.doctor_profile
         ).select_related(
             'doctor', 'doctor__user', 'hospital', 'department', 'patient'
         ).order_by('-appointment_date')
         
         # Apply date filters if provided
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
         
         try:
             if start_date:
                 start_date = timezone.make_aware(
                     datetime.strptime(start_date, '%Y-%m-%d')
                 )
-                appointments = appointments.filter(appointment_date__gte=start_date)
+                queryset = queryset.filter(appointment_date__gte=start_date)
             
             if end_date:
                 end_date = timezone.make_aware(
                     datetime.strptime(end_date, '%Y-%m-%d')
                 ).replace(hour=23, minute=59, second=59)
-                appointments = appointments.filter(appointment_date__lte=end_date)
+                queryset = queryset.filter(appointment_date__lte=end_date)
                 
         except (ValueError, TypeError) as e:
             logger.warning(f"Invalid date format in query params: {e}")
         
         # Filter by upcoming appointments if requested
-        upcoming = request.query_params.get('upcoming')
+        upcoming = self.request.query_params.get('upcoming')
         if upcoming and upcoming.lower() == 'true':
-            appointments = appointments.filter(
+            queryset = queryset.filter(
                 appointment_date__gte=timezone.now(),
                 status__in=['pending', 'confirmed', 'rescheduled']
             )
         
-        # Serialize the appointments
-        serializer = AppointmentListSerializer(appointments, many=True)
+        # Filter by status if provided
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
         
+        logger.info(f"Doctor appointment query returned {queryset.count()} appointments")
+        return queryset
+    
+    def get_serializer_class(self):
+        """
+        Use different serializers based on the action
+        """
+        if self.action in ['list', 'upcoming', 'today']:
+            return AppointmentListSerializer
+        return AppointmentSerializer
+    
+    @action(detail=True, methods=['patch'], url_path='status')
+    def update_status(self, request, appointment_id=None):
+        """
+        Update the status of an appointment and send email notification to the patient
+        """
+        try:
+            appointment = self.get_object()
+            
+            # Validate the status
+            new_status = request.data.get('status')
+            
+            if not new_status:
+                return Response({
+                    'status': 'error',
+                    'message': 'Status field is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            if new_status not in dict(Appointment.STATUS_CHOICES):
+                return Response({
+                    'status': 'error',
+                    'message': f'Invalid status: {new_status}. Valid statuses are: {", ".join(dict(Appointment.STATUS_CHOICES).keys())}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle auto-reassignment for cancelled appointments
+            if new_status == 'cancelled':
+                cancellation_reason = request.data.get('cancellation_reason')
+                if not cancellation_reason:
+                    return Response({
+                        'status': 'error',
+                        'message': 'Cancellation reason is required'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Save the cancellation reason to both notes and the dedicated field
+                appointment.notes = f"Cancelled by Dr. {appointment.doctor.user.get_full_name()}. Reason: {cancellation_reason}\n\n" + (appointment.notes or "")
+                appointment.cancellation_reason = cancellation_reason
+                appointment.cancelled_at = timezone.now()
+                
+                # Find another available doctor in the same department
+                from api.models import Doctor
+                department = appointment.department
+                hospital = appointment.hospital
+                
+                # Get doctors in the same department, excluding the current one
+                alternative_doctors = Doctor.objects.filter(
+                    department=department,
+                    hospital=hospital,
+                    is_active=True
+                ).exclude(id=appointment.doctor.id)
+                
+                # If there are alternative doctors, reassign instead of cancelling
+                if alternative_doctors.exists():
+                    # Find an available doctor for this timeslot
+                    appointment_date = appointment.appointment_date
+                    available_doctor = None
+                    
+                    for doctor in alternative_doctors:
+                        # Check if this doctor is available at this time
+                        if doctor.is_available_at(appointment_date):
+                            available_doctor = doctor
+                            break
+                    
+                    if available_doctor:
+                        # Reassign to the new doctor instead of cancelling
+                        previous_doctor = appointment.doctor
+                        appointment.doctor = available_doctor
+                        appointment.status = 'pending'  # Reset to pending for the new doctor
+                        appointment.save()
+                        
+                        # Send reassignment email
+                        from api.utils.email import send_appointment_reassignment_email
+                        send_appointment_reassignment_email(appointment, previous_doctor, cancellation_reason)
+                        
+                        serializer = self.get_serializer(appointment)
+                        return Response({
+                            'status': 'success',
+                            'message': f'Appointment reassigned to Dr. {available_doctor.user.get_full_name()}',
+                            'data': serializer.data
+                        })
+                
+                # If no available doctor found, proceed with cancellation
+                appointment.status = new_status
+                appointment.save()
+            else:
+                # Regular status update
+                appointment.status = new_status
+                appointment.save()
+            
+            # Send status update email
+            from api.utils.email import send_appointment_status_update_email
+            send_appointment_status_update_email(appointment)
+            
+            serializer = self.get_serializer(appointment)
+            return Response({
+                'status': 'success',
+                'message': f'Appointment status updated to {new_status}',
+                'data': serializer.data
+            })
+        except Exception as e:
+            logger.error(f"Error updating appointment status: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['patch'], url_path='notes')
+    def update_notes(self, request, appointment_id=None):
+        """
+        Update notes for an appointment
+        """
+        try:
+            appointment = self.get_object()
+            
+            # Validate the notes
+            notes = request.data.get('notes')
+            
+            if notes is None:
+                return Response({
+                    'status': 'error',
+                    'message': 'Notes field is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            # Update the notes
+            appointment.notes = notes
+            appointment.save()
+            
+            # Return the updated appointment
+            serializer = self.get_serializer(appointment)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Error updating appointment notes: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'], url_path='summary')
+    def summary(self, request, appointment_id=None):
+        """
+        Return a detailed summary of the appointment
+        """
+        appointment = self.get_object()
+        serializer = AppointmentSerializer(appointment, context={'request': request})
+        
+        # Ensure consistent patient name formatting
+        if appointment.patient:
+            patient_name = f"{appointment.patient.first_name} {appointment.patient.last_name}"
+        else:
+            patient_name = None
+        
+        # Get appointment summary data
+        summary_data = {
+            # Appointment details
+            "appointment_id": appointment.appointment_id,
+            "doctor": serializer.data.get('doctor_full_name'),
+            "date": serializer.data.get('formatted_date'),
+            "time": serializer.data.get('formatted_time'),
+            "formatted_date_time": serializer.data.get('formatted_date_time'),
+            "hospital": appointment.hospital.name,
+            "department": appointment.department.name,
+            "type": serializer.data.get('type') or serializer.data.get('formatted_appointment_type'),
+            "priority": serializer.data.get('formatted_priority'),
+            "duration": f"{appointment.duration} minutes",
+            "status": serializer.data.get('status_display'),
+            
+            # Patient details
+            "patient_name": patient_name,  # Use consistently formatted patient name
+            "chief_complaint": appointment.chief_complaint or "None specified",
+            "symptoms": appointment.symptoms or "None",
+            "medical_history": appointment.medical_history or "None",
+            "allergies": appointment.allergies or "None",
+            "current_medications": appointment.current_medications or "None",
+            
+            # Additional info
+            "important_notes": serializer.data.get('important_notes'),
+            "payment_required": appointment.payment_required,
+            "payment_status": appointment.payment_status,
+            "is_insurance_based": appointment.is_insurance_based,
+            "insurance_details": appointment.insurance_details if appointment.is_insurance_based else None,
+            "notes": appointment.notes or "",
+            "created_at": appointment.created_at.strftime("%B %d, %Y at %I:%M %p") if appointment.created_at else None,
+            "updated_at": appointment.updated_at.strftime("%B %d, %Y at %I:%M %p") if appointment.updated_at else None,
+        }
+        
+        return Response(summary_data)
+    
+    @action(detail=False, methods=['get'], url_path='upcoming')
+    def upcoming(self, request):
+        """
+        Return upcoming appointments for the doctor
+        """
+        queryset = self.get_queryset().filter(
+            appointment_date__gte=timezone.now(),
+            status__in=['pending', 'confirmed', 'rescheduled']
+        )
+        
+        serializer = AppointmentListSerializer(queryset, many=True)
         return Response(serializer.data)
     
-    except Exception as e:
-        import traceback
-        error_msg = f"Error getting doctor appointments: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_msg)
+    @action(detail=False, methods=['get'], url_path='today')
+    def today(self, request):
+        """
+        Return today's appointments for the doctor
+        """
+        today = timezone.now().date()
+        queryset = self.get_queryset().filter(
+            appointment_date__date=today
+        )
+        
+        serializer = AppointmentListSerializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], url_path='stats')
+    def stats(self, request):
+        """
+        Return appointment statistics for the doctor
+        """
+        user = request.user
+        
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered as a doctor in the system'
+            }, status=status.HTTP_403_FORBIDDEN)
+            
+        # Get doctor's appointments
+        appointments = Appointment.objects.filter(
+            doctor=user.doctor_profile
+        )
+        
+        # Calculate statistics
+        today = timezone.now().date()
+        
+        # Total appointments
+        total = appointments.count()
+        
+        # Today's appointments
+        today_count = appointments.filter(appointment_date__date=today).count()
+        
+        # Upcoming appointments
+        upcoming_count = appointments.filter(
+            appointment_date__gte=timezone.now(),
+            status__in=['pending', 'confirmed', 'rescheduled']
+        ).count()
+        
+        # Completed appointments
+        completed_count = appointments.filter(status='completed').count()
+        
+        # Cancelled appointments
+        cancelled_count = appointments.filter(status='cancelled').count()
+        
+        # No-show appointments
+        no_show_count = appointments.filter(status='no_show').count()
+        
+        # Status distribution
+        status_counts = {}
+        for status_choice, _ in Appointment.STATUS_CHOICES:
+            status_counts[status_choice] = appointments.filter(status=status_choice).count()
+            
+        # Return statistics
         return Response({
+
+            'total_appointments': total,
+            'today_appointments': today_count,
+            'upcoming_appointments': upcoming_count,
+            'completed_appointments': completed_count,
+            'cancelled_appointments': cancelled_count,
+            'no_show_appointments': no_show_count,
+            'status_distribution': status_counts
+        })
+
             'status': 'error',
             'message': str(e),
             'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
@@ -2268,3 +2663,4 @@ def get_client_ip(request):
     else:
         ip = request.META.get('REMOTE_ADDR')
     return ip
+

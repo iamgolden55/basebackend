@@ -12,16 +12,20 @@ from api.views import (
     HospitalLocationViewSet,
     hospital_registration,
     AppointmentViewSet,
+    DoctorAppointmentViewSet,
     has_primary_hospital,
     check_user_exists,
     appointment_types,
     departments,
     DoctorAssignmentView,
     pending_hospital_registrations,
+
+
     doctor_appointments,
     PatientMedicalRecordView,
     RequestMedicalRecordOTPView,
     VerifyMedicalRecordOTPView,
+
 )
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -31,6 +35,7 @@ from rest_framework.response import Response
 router = DefaultRouter()
 router.register(r'hospitals', HospitalLocationViewSet, basename='hospital')
 router.register(r'appointments', AppointmentViewSet, basename='appointment')
+router.register(r'doctor-appointments', DoctorAppointmentViewSet, basename='doctor-appointment')
 
 @api_view(['GET'])
 def health_check(request):
@@ -97,15 +102,16 @@ urlpatterns = [
          pending_hospital_registrations, 
          name='pending-hospital-registrations'),
     
-    path('', include(router.urls)),
-    
-    path('health-check/', health_check, name='health-check'),
-    
-    # New endpoints for appointment booking
+    # Appointment endpoints
     path('appointment-types/', appointment_types, name='appointment-types'),
     path('departments/', departments, name='departments'),
     path('doctor-assignment/', DoctorAssignmentView.as_view(), name='doctor-assignment'),
     
+
+    # Router includes all viewsets
+    path('', include(router.urls)),
+    
+    path('health-check/', health_check, name='health-check'),
     # New endpoint for patient medical records - secure access
     path('patient/medical-record/', PatientMedicalRecordView.as_view(), name='patient-medical-record'),
     path('patient/medical-record/request-otp/', RequestMedicalRecordOTPView.as_view(), name='request-medical-record-otp'),
@@ -113,6 +119,7 @@ urlpatterns = [
     
     # New endpoint for doctor's appointments
     path('doctor-appointments/', doctor_appointments, name='doctor-appointments'),
+
 ]
 
 # Available endpoints:
@@ -133,3 +140,12 @@ urlpatterns = [
 # POST /api/appointments/<id>/complete/ - Mark an appointment as completed
 # GET /api/appointments/upcoming/ - Get upcoming appointments
 # GET /api/appointments/today/ - Get today's appointments
+
+# Doctor appointment endpoints:
+# GET /api/doctor-appointments/ - List all appointments for the logged-in doctor
+# GET /api/doctor-appointments/<id>/ - Get details of a specific appointment
+# PATCH /api/doctor-appointments/<id>/status/ - Update appointment status
+# PATCH /api/doctor-appointments/<id>/notes/ - Update appointment notes
+# GET /api/doctor-appointments/upcoming/ - Get upcoming appointments
+# GET /api/doctor-appointments/today/ - Get today's appointments
+# GET /api/doctor-appointments/stats/ - Get appointment statistics
