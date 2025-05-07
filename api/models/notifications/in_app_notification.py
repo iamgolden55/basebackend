@@ -18,4 +18,27 @@ class InAppNotification(models.Model):
     def mark_as_read(self):
         self.is_read = True
         self.read_at = timezone.now()
-        self.save() 
+        self.save()
+        
+    @classmethod
+    def create_notification(cls, user, title, message, notification_type, reference_id=None):
+        """
+        Create a new in-app notification
+        
+        Args:
+            user: CustomUser instance receiving the notification
+            title: Notification title
+            message: Notification message text
+            notification_type: Type of notification (e.g., 'medical_record', 'test_result', 'appointment')
+            reference_id: Optional ID of the referenced object (e.g., appointment_id)
+            
+        Returns:
+            The created notification instance
+        """
+        return cls.objects.create(
+            user=user,
+            title=title,
+            message=message,
+            notification_type=notification_type,
+            reference_id=reference_id
+        ) 

@@ -266,7 +266,26 @@ class ClinicalNote(TimestampedModel):
         if not self.visit_date and self.note_date:
             self.visit_date = self.note_date.date()
             
+        # Check if this is a new note being created
+        is_new = self._state.adding
+            
+        # Save the note
         super().save(*args, **kwargs)
+        
+        # Send notification to patient if this is a new note and not a draft
+        if is_new and self.status != 'draft' and hasattr(self.medical_record, 'patient') and self.medical_record.patient:
+            # Create in-app notification for the patient
+            from api.models.notifications.in_app_notification import InAppNotification
+            
+            note_type_display = self.get_note_type_display()
+            
+            InAppNotification.create_notification(
+                user=self.medical_record.patient,
+                title=f"New {note_type_display} Added",
+                message=f"A new {note_type_display.lower()} has been added to your medical records.",
+                notification_type="medical_record",
+                reference_id=f"NOTE-{self.id}"
+            )
     
     def sign(self, user, cosigner=None):
         """
@@ -292,6 +311,21 @@ class ClinicalNote(TimestampedModel):
             self.cosigned_at = timezone.now()
             
         self.save()
+        
+        # Send notification to patient when note is signed and finalized
+        if hasattr(self.medical_record, 'patient') and self.medical_record.patient:
+            from api.models.notifications.in_app_notification import InAppNotification
+            
+            note_type_display = self.get_note_type_display()
+            
+            InAppNotification.create_notification(
+                user=self.medical_record.patient,
+                title=f"{note_type_display} Finalized",
+                message=f"Your {note_type_display.lower()} has been finalized and is ready for review.",
+                notification_type="medical_record",
+                reference_id=f"NOTE-{self.id}"
+            )
+        
         return True
     
     def amend(self, new_content, reason, user):
@@ -327,6 +361,20 @@ class ClinicalNote(TimestampedModel):
             amendment_reason=reason,
             is_private=self.is_private
         )
+        
+        # Notify patient about amended note
+        if hasattr(self.medical_record, 'patient') and self.medical_record.patient:
+            from api.models.notifications.in_app_notification import InAppNotification
+            
+            note_type_display = self.get_note_type_display()
+            
+            InAppNotification.create_notification(
+                user=self.medical_record.patient,
+                title=f"{note_type_display} Updated",
+                message=f"Your {note_type_display.lower()} has been updated with new information.",
+                notification_type="medical_record",
+                reference_id=f"NOTE-{new_note.id}"
+            )
         
         return new_note
     

@@ -37,6 +37,9 @@ from api.views.hospital.hospital_views import (
 # Medical views
 from api.views.medical.medical_views import DoctorAssignmentView
 
+# Notification views
+from api.views.utils.notification_views import InAppNotificationViewSet
+
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
@@ -45,6 +48,7 @@ from rest_framework.response import Response
 router = DefaultRouter()
 router.register(r'hospitals', HospitalLocationViewSet, basename='hospital')
 router.register(r'appointments', AppointmentViewSet, basename='appointment')
+router.register(r'notifications', InAppNotificationViewSet, basename='notification')
 
 @api_view(['GET'])
 def health_check(request):
