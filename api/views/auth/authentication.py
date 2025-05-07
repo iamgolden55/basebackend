@@ -30,7 +30,8 @@ from api.serializers import (
     UserSerializer, CustomTokenObtainPairSerializer,
     EmailVerificationSerializer, UserProfileSerializer,
     PasswordResetRequestSerializer, PasswordResetConfirmSerializer,
-    PatientMedicalRecordSerializer, OnboardingStatusSerializer
+    PatientMedicalRecordSerializer, OnboardingStatusSerializer,
+    ChangePasswordSerializer
 )
 from api.utilis import rate_limit_otp
 from api.utils.location_utils import get_location_from_ip, get_client_ip
@@ -67,6 +68,26 @@ def send_verification_email(user, verification_link):
         logger.error(f"Failed to send verification email: {str(e)}")
         return False
     
+def format_secondary_languages(secondary_languages):
+    """Utility function to convert secondary_languages to the proper format"""
+    if secondary_languages is None:
+        return []
+    elif isinstance(secondary_languages, str):
+        # Check if it's a string representation of a list like "['yo', 'en']"
+        if secondary_languages.startswith('[') and secondary_languages.endswith(']'):
+            # Remove brackets and split by comma
+            langs = secondary_languages.strip('[]')
+            # Handle empty list case
+            if not langs:
+                return []
+            else:
+                # Split by comma and remove quotes and whitespace
+                return [lang.strip().strip("'").strip('"') for lang in langs.split(',')]
+        # Handle the case when it's a comma-separated string like "yoruba,hausa"
+        else:
+            return [lang.strip() for lang in secondary_languages.split(',') if lang.strip()]
+    return secondary_languages  # If it's already a list or other format
+
 class UserRegistrationView(generics.CreateAPIView):
     queryset = CustomUser.objects.all()
     permission_classes = [AllowAny]
@@ -284,7 +305,10 @@ class LoginView(APIView):
             'city': user.city,
             'date_of_birth': user.date_of_birth,
             'gender': user.gender,
-            'has_completed_onboarding': user.has_completed_onboarding
+            'has_completed_onboarding': user.has_completed_onboarding,
+            'preferred_language': user.preferred_language,
+            'secondary_languages': format_secondary_languages(user.secondary_languages),
+            'custom_language': user.custom_language
         }
         
         return Response({
@@ -400,7 +424,10 @@ class VerifyLoginOTPView(APIView):
                     'city': user.city,
                     'date_of_birth': user.date_of_birth,
                     'gender': user.gender,
-                    'has_completed_onboarding': user.has_completed_onboarding
+                    'has_completed_onboarding': user.has_completed_onboarding,
+                    'preferred_language': user.preferred_language,
+                    'secondary_languages': format_secondary_languages(user.secondary_languages),
+                    'custom_language': user.custom_language
                 }
                 
                 # Log successful verification
@@ -747,5 +774,54 @@ class PatientMedicalRecordView(APIView):
                 {"error": "An error occurred while accessing medical records"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            user = request.user
+            if user.check_password(serializer.validated_data['current_password']):
+                # Set new password
+                user.set_password(serializer.validated_data['new_password'])
+                user.save()
+                
+                # Get location info from IP and device info for the email
+                ip_address = get_client_ip(request)
+                location_info = get_location_from_ip(ip_address)
+                device = request.META.get('HTTP_USER_AGENT', 'Unknown Device')
+                
+                # Prepare context for the email template
+                context = {
+                    'user': user,
+                    'timestamp': timezone.now().strftime('%b %d %Y %H:%M:%S %Z'),
+                    'location': f"{location_info.get('city', 'Unknown')}, {location_info.get('country', 'Unknown')}",
+                    'device': device,
+                    'frontend_url': os.environ.get('NEXTJS_URL', '').rstrip('/')
+                }
+                
+                # Render the email template
+                html_message = render_to_string('email/password_change_confirmation.html', context)
+                plain_message = strip_tags(html_message)
+                
+                # Send the confirmation email
+                try:
+                    send_mail(
+                        subject='PHB Healthcare - Password Changed Successfully',
+                        message=plain_message,
+                        from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+                        recipient_list=[user.email],
+                        html_message=html_message,
+                        fail_silently=False,
+                    )
+                    logger.info(f"Password change confirmation email sent to {user.email}")
+                except Exception as e:
+                    logger.error(f"Failed to send password change confirmation email: {str(e)}")
+                
+                return Response({'message': 'Password changed successfully! 🎉'})
+            else:
+                return Response({'error': 'Current password is incorrect'}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
       

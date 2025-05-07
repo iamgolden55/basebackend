@@ -14,5 +14,6 @@ from api.views.auth.authentication import (
     UpdateOnboardingStatusView,
     PatientMedicalRecordView,
     RequestMedicalRecordOTPView,
-    VerifyMedicalRecordOTPView
+    VerifyMedicalRecordOTPView,
+    ChangePasswordView
 )
