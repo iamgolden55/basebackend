@@ -1,8 +1,20 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from django.views.generic import RedirectView
-from api.views import UserProfileUpdateView, PasswordResetRequestView, PasswordResetConfirmView, UpdateOnboardingStatusView
-from api.views import (
+
+# Auth views
+from api.views.auth.authentication import (
+    UserProfileUpdateView,
+    PasswordResetRequestView,
+    PasswordResetConfirmView,
+    PatientMedicalRecordView,
+    RequestMedicalRecordOTPView,
+    VerifyMedicalRecordOTPView,
+    UpdateOnboardingStatusView,
+)
+
+# Hospital views
+from api.views.hospital.hospital_views import (
     HospitalRegistrationViewSet,
     UserHospitalRegistrationsView,
     SetPrimaryHospitalView,
@@ -12,18 +24,18 @@ from api.views import (
     approve_registration,
     HospitalLocationViewSet,
     hospital_registration,
-    AppointmentViewSet,
     has_primary_hospital,
     check_user_exists,
     appointment_types,
     departments,
-    DoctorAssignmentView,
     pending_hospital_registrations,
     doctor_appointments,
-    PatientMedicalRecordView,
-    RequestMedicalRecordOTPView,
-    VerifyMedicalRecordOTPView,
+    AppointmentViewSet,
 )
+
+# Medical views
+from api.views.medical.medical_views import DoctorAssignmentView
+
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
