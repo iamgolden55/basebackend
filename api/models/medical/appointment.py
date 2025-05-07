@@ -110,6 +110,11 @@ class Appointment(TimestampedModel):
         blank=True,
         help_text="Current medications"
     )
+    medical_summary = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Summary of the appointment after completion"
+    )
     
     # Payment Information
     fee = models.ForeignKey(
@@ -275,65 +280,314 @@ class Appointment(TimestampedModel):
         return registrations.filter(hospital=self.hospital).exists()
 
     def save(self, *args, **kwargs):
-        # Generate appointment ID if not provided
+        """Override save method to handle various appointment-related operations"""
+        # Check if this is a new appointment
+        is_new = self.pk is None
+        
+        # If ID is not set yet, generate a unique appointment ID
         if not self.appointment_id:
             self.appointment_id = self.generate_appointment_id()
-            
+        
         # Ensure validation is performed
         self.full_clean()
-            
+        
         # Update timestamps based on status
         if self.status == 'cancelled' and not self.cancelled_at:
             self.cancelled_at = timezone.now()
         elif self.status == 'completed' and not self.completed_at:
             self.completed_at = timezone.now()
             
-        # Check if this is a new instance before saving
-        _is_new = self.pk is None 
+        # Keep track of status changes
+        if not is_new:
+            old_instance = Appointment.objects.get(pk=self.pk)
+            self._old_status = old_instance.status
+        else:
+            self._old_status = None
         
+        # Save the appointment
         super().save(*args, **kwargs)
         
-        # Create booking confirmation notifications if it's a new appointment
-        if _is_new:
-            # Import here to avoid circular imports
-            from api.utils.email import send_appointment_confirmation_email
-            
-            # Send email confirmation
-            send_appointment_confirmation_email(self)
-            
-            # Create Email Notification
-            AppointmentNotification.objects.create(
+        # Handle status change notifications
+        if not is_new and hasattr(self, '_old_status') and self._old_status != self.status:
+            self.handle_status_change(self._old_status, self.status)
+        
+        # Add any first-time booking notifications if this is a new appointment
+        if is_new:
+            from api.models.medical.appointment_notification import AppointmentNotification
+            # Create booking confirmation notification
+            AppointmentNotification.objects.get_or_create(
                 appointment=self,
                 notification_type='email',
                 event_type='booking_confirmation',
-                recipient=self.patient,
-                subject=f"Appointment Booking Confirmation - {self.appointment_id}",
-                message=(
-                    f"Dear {self.patient.get_full_name()},\n\n"
-                    f"Your appointment with Dr. {self.doctor.user.get_full_name()} "
-                    f"at {self.hospital.name} ({self.department.name}) on "
-                    f"{self.appointment_date.strftime('%Y-%m-%d %H:%M')} has been booked.\n\n"
-                    f"Appointment ID: {self.appointment_id}\n"
-                ),
-                # Optionally specify a template name if using email templates
-                # template_name='appointment_booking_confirmation' 
+                defaults={
+                    'recipient': self.patient,
+                    'subject': f'Appointment Confirmation - {self.appointment_id}',
+                    'template_name': 'appointment_confirmation',
+                    'status': 'pending',
+                    'scheduled_time': timezone.now()
+                }
             )
             
-            # Create SMS Notification (adjust message for SMS length constraints)
-            AppointmentNotification.objects.create(
-                appointment=self,
-                notification_type='sms',
-                event_type='booking_confirmation',
-                recipient=self.patient,
-                subject=f"Appt Confirmed: {self.appointment_id}", # Shorter subject for SMS?
-                message=(
-                    f"Appt Confirmed: Dr. {self.doctor.user.last_name}, "
-                    f"{self.appointment_date.strftime('%b %d, %H:%M')}. "
-                    f"ID: {self.appointment_id}. "
-                    f"Hospital: {self.hospital.name[:10]}"
+            # Create SMS notification if patient has phone number
+            if self.patient.phone:
+                AppointmentNotification.objects.get_or_create(
+                    appointment=self,
+                    notification_type='sms',
+                    event_type='booking_confirmation',
+                    defaults={
+                        'recipient': self.patient,
+                        'subject': f'Appointment Booking - {self.appointment_id}',
+                        'message': f'Your appointment with Dr. {self.doctor.user.last_name} is scheduled for {self.appointment_date.strftime("%d/%m/%Y at %I:%M %p")}. Ref: {self.appointment_id}',
+                        'status': 'pending',
+                        'scheduled_time': timezone.now()
+                    }
                 )
-                # template_name='sms_booking_confirmation' # Optional template
+                
+            # Schedule reminder notification for 24 hours before appointment
+            reminder_time = self.appointment_date - timezone.timedelta(days=1)
+            if reminder_time > timezone.now():
+                AppointmentNotification.objects.get_or_create(
+                    appointment=self,
+                    notification_type='email',
+                    event_type='appointment_reminder',
+                    defaults={
+                        'recipient': self.patient,
+                        'subject': f'Appointment Reminder - {self.appointment_id}',
+                        'template_name': 'appointment_reminder',
+                        'status': 'pending',
+                        'scheduled_time': reminder_time
+                    }
+                )
+                
+                # Add SMS reminder if patient has phone
+                if self.patient.phone:
+                    AppointmentNotification.objects.get_or_create(
+                        appointment=self,
+                        notification_type='sms',
+                        event_type='appointment_reminder',
+                        defaults={
+                            'recipient': self.patient,
+                            'subject': f'Appointment Reminder - {self.appointment_id}',
+                            'message': f'Reminder: Your appointment with Dr. {self.doctor.user.last_name} is tomorrow at {self.appointment_date.strftime("%I:%M %p")}. Ref: {self.appointment_id}',
+                            'status': 'pending',
+                            'scheduled_time': reminder_time
+                        }
+                    )
+                    
+    def handle_status_change(self, old_status, new_status):
+        """Handle operations related to status changes"""
+        # Import here to avoid circular imports
+        from api.models.medical.appointment_notification import AppointmentNotification
+        from api.utils.email import send_appointment_status_update_email
+        
+        try:
+            # Different actions based on the new status
+            if new_status == 'confirmed' and old_status != 'confirmed':
+                # Create confirmed status notification
+                email_notification = AppointmentNotification.objects.create(
+                    appointment=self,
+                    notification_type='email',
+                    event_type='appointment_update',
+                    recipient=self.patient,
+                    subject=f"Appointment Confirmed - {self.appointment_id}",
+                    template_name='appointment_status_update',
+                    status='pending',
+                    scheduled_time=timezone.now()
+                )
+                
+                # Create SMS notification if patient has phone
+                if self.patient.phone:
+                    sms_notification = AppointmentNotification.objects.create(
+                        appointment=self,
+                        notification_type='sms',
+                        event_type='appointment_update',
+                        recipient=self.patient,
+                        subject=f"Appointment Confirmed - {self.appointment_id}",
+                        message=f"Your appointment with Dr. {self.doctor.user.last_name} on {self.appointment_date.strftime('%d/%m/%Y at %I:%M %p')} is now confirmed.",
+                        status='pending',
+                        scheduled_time=timezone.now()
+                    )
+                
+                # Send email immediately
+                send_appointment_status_update_email(self)
+                
+            elif new_status == 'cancelled' and old_status != 'cancelled':
+                # Record cancellation time
+                if not self.cancelled_at:
+                    self.cancelled_at = timezone.now()
+                    self.save(update_fields=['cancelled_at'])
+                    
+                # Create cancellation notification
+                email_notification = AppointmentNotification.objects.create(
+                    appointment=self,
+                    notification_type='email',
+                    event_type='appointment_update',
+                    recipient=self.patient,
+                    subject=f"Appointment Cancelled - {self.appointment_id}",
+                    template_name='appointment_status_update',
+                    status='pending',
+                    scheduled_time=timezone.now()
+                )
+                
+                # Create SMS notification
+                if self.patient.phone:
+                    sms_notification = AppointmentNotification.objects.create(
+                        appointment=self,
+                        notification_type='sms',
+                        event_type='appointment_update',
+                        recipient=self.patient,
+                        subject=f"Appointment Cancelled - {self.appointment_id}",
+                        message=f"Your appointment with Dr. {self.doctor.user.last_name} on {self.appointment_date.strftime('%d/%m/%Y at %I:%M %p')} has been cancelled.",
+                        status='pending',
+                        scheduled_time=timezone.now()
+                    )
+                
+                # Send email immediately
+                send_appointment_status_update_email(self)
+            
+            # Special handling for completed appointments
+            elif new_status == 'completed' and old_status != 'completed':
+                # Record in patient's medical record
+                self._create_medical_record_entry()
+                
+                # Create completed status notification
+                email_notification = AppointmentNotification.objects.create(
+                    appointment=self,
+                    notification_type='email',
+                    event_type='appointment_update',
+                    recipient=self.patient,
+                    subject=f"Appointment Completed - {self.appointment_id}",
+                    template_name='appointment_status_update',
+                    status='pending',
+                    scheduled_time=timezone.now()
+                )
+                
+                # Create SMS notification if patient has phone
+                if self.patient.phone:
+                    sms_notification = AppointmentNotification.objects.create(
+                        appointment=self,
+                        notification_type='sms',
+                        event_type='appointment_update',
+                        recipient=self.patient,
+                        subject=f"Appointment Completed - {self.appointment_id}",
+                        message=f"Your appointment with Dr. {self.doctor.user.last_name} has been completed. Please check your email for details and access your medical record for the summary.",
+                        status='pending',
+                        scheduled_time=timezone.now()
+                    )
+                
+                # Send email immediately
+                send_appointment_status_update_email(self)
+                
+            # For all other status changes, also send notification
+            else:
+                # Create status update notification record
+                status_display = dict(self._meta.get_field('status').choices).get(new_status, new_status)
+                
+                email_notification = AppointmentNotification.objects.create(
+                    appointment=self,
+                    notification_type='email',
+                    event_type='appointment_update',
+                    recipient=self.patient,
+                    subject=f"Appointment Status Updated to {status_display} - {self.appointment_id}",
+                    template_name='appointment_status_update',
+                    status='pending',
+                    scheduled_time=timezone.now()
+                )
+                
+                # Create SMS notification for other status changes
+                if self.patient.phone:
+                    sms_notification = AppointmentNotification.objects.create(
+                        appointment=self,
+                        notification_type='sms',
+                        event_type='appointment_update',
+                        recipient=self.patient,
+                        subject=f"Appointment Status Update - {self.appointment_id}",
+                        message=f"Your appointment with Dr. {self.doctor.user.last_name} on {self.appointment_date.strftime('%d/%m/%Y at %I:%M %p')} status has been updated to {status_display}.",
+                        status='pending',
+                        scheduled_time=timezone.now()
+                    )
+                
+                # Send email for other status changes
+                send_appointment_status_update_email(self)
+            
+            return True
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error handling status change: {str(e)}")
+            return False
+    
+    def _create_medical_record_entry(self):
+        """
+        Create an entry in the patient's medical record when an appointment is completed
+        This associates the medical summary with the patient's permanent record
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Check if patient has a medical record
+            if not hasattr(self.patient, 'medical_record') or not self.patient.medical_record:
+                # Try to get HPN from patient
+                hpn = getattr(self.patient, 'hpn', None)
+                if not hpn:
+                    # Generate temporary HPN if needed
+                    import uuid
+                    hpn = f"HPN-{uuid.uuid4().hex[:8].upper()}"
+                
+                # Create medical record if it doesn't exist
+                from api.models.medical.medical_record import MedicalRecord
+                medical_record = MedicalRecord.objects.create(
+                    user=self.patient,
+                    hpn=hpn,
+                    last_visit_date=timezone.now()
+                )
+                logger.info(f"Created new medical record for patient {self.patient.id} with HPN {hpn}")
+            else:
+                # Use existing medical record
+                medical_record = self.patient.medical_record
+                # Update last visit date
+                medical_record.last_visit_date = timezone.now()
+                medical_record.save(update_fields=['last_visit_date'])
+            
+            # Create doctor interaction record
+            from api.models.medical.medical_record import DoctorInteraction
+            interaction = DoctorInteraction.objects.create(
+                medical_record=medical_record,
+                doctor=self.doctor,
+                interaction_date=timezone.now(),
+                interaction_type='appointment',
+                doctor_notes=self.medical_summary
             )
+            
+            logger.info(f"Created doctor interaction record {interaction.id} for completed appointment {self.appointment_id}")
+            
+            # Update the medical record complexity metrics
+            medical_record.update_complexity_metrics()
+            
+            return interaction
+            
+        except Exception as e:
+            logger.error(f"Error creating medical record entry for appointment {self.appointment_id}: {str(e)}")
+            return None
+
+    def get_appointment_summary(self):
+        """Get summary of appointment details"""
+        return {
+            'appointment_id': self.appointment_id,
+            'patient': self.patient.get_full_name(),
+            'doctor': f"Dr. {self.doctor.user.get_full_name()}",
+            'department': self.department.name,
+            'hospital': self.hospital.name,
+            'date': self.appointment_date,
+            'status': self.status,
+            'type': self.appointment_type,
+            'priority': self.priority,
+            'payment_status': self.payment_status,
+            'is_insurance_based': self.is_insurance_based,
+            'is_upcoming': self.is_upcoming,
+            'can_be_cancelled': self.can_be_cancelled
+        }
 
     @staticmethod
     def generate_appointment_id():
@@ -345,7 +599,7 @@ class Appointment(TimestampedModel):
         """Check if status transition is valid"""
         valid_transitions = {
             'pending': ['confirmed', 'cancelled', 'rejected', 'referred'],
-            'confirmed': ['in_progress', 'cancelled', 'no_show', 'referred'],
+            'confirmed': ['in_progress', 'cancelled', 'no_show', 'referred', 'completed'],
             'in_progress': ['completed', 'referred'],
             'completed': [],  # No further transitions allowed
             'cancelled': [],  # No further transitions allowed
@@ -548,24 +802,6 @@ class Appointment(TimestampedModel):
             return (timezone.now() - self.last_reminder_sent).days >= 1
             
         return True
-
-    def get_appointment_summary(self):
-        """Get summary of appointment details"""
-        return {
-            'appointment_id': self.appointment_id,
-            'patient': self.patient.get_full_name(),
-            'doctor': f"Dr. {self.doctor.user.get_full_name()}",
-            'department': self.department.name,
-            'hospital': self.hospital.name,
-            'date': self.appointment_date,
-            'status': self.status,
-            'type': self.appointment_type,
-            'priority': self.priority,
-            'payment_status': self.payment_status,
-            'is_insurance_based': self.is_insurance_based,
-            'is_upcoming': self.is_upcoming,
-            'can_be_cancelled': self.can_be_cancelled
-        }
 
 class AppointmentType(models.Model):
     id = models.CharField(max_length=50, primary_key=True)  # e.g., "first_visit"

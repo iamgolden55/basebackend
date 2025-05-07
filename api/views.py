@@ -17,7 +17,8 @@ from .serializers import (
     HospitalAdminRegistrationSerializer, HospitalSerializer, 
     HospitalLocationSerializer, NearbyHospitalSerializer,
     AppointmentSerializer, AppointmentListSerializer,
-    ExistingUserToAdminSerializer, PatientMedicalRecordSerializer
+    ExistingUserToAdminSerializer, PatientMedicalRecordSerializer,
+    PatientMedicalRecordSummarySerializer
 )
 from django.contrib.auth import authenticate
 from django.core.mail import send_mail
@@ -38,7 +39,7 @@ from rest_framework.exceptions import ValidationError
 from datetime import datetime, timedelta
 from django.utils.dateparse import parse_date
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db.models import Q
+from django.db.models import Q, Count
 from django_filters.rest_framework import DjangoFilterBackend
 from api.models.medical.appointment import AppointmentType
 from api.models.medical.department import Department
@@ -1237,7 +1238,15 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                     'message': f'Invalid status: {new_status}. Valid statuses are: {", ".join(dict(Appointment.STATUS_CHOICES).keys())}'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Handle auto-reassignment for cancelled appointments
+            # Check status transition is valid
+            old_status = appointment.status
+            if not appointment._is_valid_status_transition(old_status, new_status):
+                return Response({
+                    'status': 'error',
+                    'message': f'Invalid status transition from {old_status} to {new_status}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Handle cancellation reason
             if new_status == 'cancelled':
                 cancellation_reason = request.data.get('cancellation_reason')
                 if not cancellation_reason:
@@ -1246,70 +1255,106 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                         'message': 'Cancellation reason is required'
                     }, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Save the cancellation reason to both notes and the dedicated field
-                appointment.notes = f"Cancelled by Dr. {appointment.doctor.user.get_full_name()}. Reason: {cancellation_reason}\n\n" + (appointment.notes or "")
                 appointment.cancellation_reason = cancellation_reason
                 appointment.cancelled_at = timezone.now()
+            elif new_status == 'completed':
+                # Check if medical summary is provided
+                medical_summary = request.data.get('medical_summary')
                 
-                # Find another available doctor in the same department
-                from api.models import Doctor
-                department = appointment.department
-                hospital = appointment.hospital
+                # Save the medical summary if provided
+                if medical_summary:
+                    appointment.medical_summary = medical_summary
                 
-                # Get doctors in the same department, excluding the current one
-                alternative_doctors = Doctor.objects.filter(
-                    department=department,
-                    hospital=hospital,
-                    is_active=True
-                ).exclude(id=appointment.doctor.id)
-                
-                # If there are alternative doctors, reassign instead of cancelling
-                if alternative_doctors.exists():
-                    # Find an available doctor for this timeslot
-                    appointment_date = appointment.appointment_date
-                    available_doctor = None
-                    
-                    for doctor in alternative_doctors:
-                        # Check if this doctor is available at this time
-                        if doctor.is_available_at(appointment_date):
-                            available_doctor = doctor
-                            break
-                    
-                    if available_doctor:
-                        # Reassign to the new doctor instead of cancelling
-                        previous_doctor = appointment.doctor
-                        appointment.doctor = available_doctor
-                        appointment.status = 'pending'  # Reset to pending for the new doctor
-                        appointment.save()
-                        
-                        # Send reassignment email
-                        from api.utils.email import send_appointment_reassignment_email
-                        send_appointment_reassignment_email(appointment, previous_doctor, cancellation_reason)
-                        
-                        serializer = self.get_serializer(appointment)
-                        return Response({
-                            'status': 'success',
-                            'message': f'Appointment reassigned to Dr. {available_doctor.user.get_full_name()}',
-                            'data': serializer.data
-                        })
-                
-                # If no available doctor found, proceed with cancellation
+                # Update status and save
                 appointment.status = new_status
+                appointment.completed_at = timezone.now()
                 appointment.save()
             else:
                 # Regular status update
                 appointment.status = new_status
                 appointment.save()
             
-            # Send status update email
+            # Enhanced status update email handling - especially for "confirmed" status
             from api.utils.email import send_appointment_status_update_email
-            send_appointment_status_update_email(appointment)
+            
+            # Create special notification for confirmation if status changed to confirmed
+            notification_info = {}
+            if new_status == 'confirmed' and old_status != 'confirmed':
+                try:
+                    # Import AppointmentNotification here to avoid circular imports
+                    from api.models.medical.appointment_notification import AppointmentNotification
+                    
+                    # Create email notification
+                    email_notification = AppointmentNotification.objects.create(
+                        appointment=appointment,
+                        notification_type='email',
+                        event_type='appointment_update',
+                        recipient=appointment.patient,
+                        subject=f"Appointment Confirmed - {appointment.appointment_id}",
+                        message=f"Your appointment has been confirmed by Dr. {appointment.doctor.user.get_full_name()} for {appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p')}.",
+                        status='pending',
+                        scheduled_time=timezone.now()
+                    )
+                    
+                    notification_info['email'] = {
+                        'id': email_notification.id,
+                        'status': email_notification.status
+                    }
+                    
+                    # Create SMS notification if patient has phone number
+                    if appointment.patient.phone:
+                        sms_notification = AppointmentNotification.objects.create(
+                            appointment=appointment,
+                            notification_type='sms',
+                            event_type='appointment_update',
+                            recipient=appointment.patient,
+                            subject=f"Appointment Confirmed - {appointment.appointment_id}",
+                            message=f"Your appointment with Dr. {appointment.doctor.user.last_name} on {appointment.appointment_date.strftime('%d/%m/%Y at %I:%M %p')} is now confirmed.",
+                            status='pending',
+                            scheduled_time=timezone.now()
+                        )
+                        
+                        notification_info['sms'] = {
+                            'id': sms_notification.id,
+                            'status': sms_notification.status
+                        }
+                        
+                    logger.info(f"Created confirmation notifications for appointment {appointment.appointment_id}")
+                except Exception as e:
+                    logger.error(f"Error creating confirmation notifications: {str(e)}")
+                    notification_info['creation_error'] = str(e)
+            
+            # Send status update email
+            send_result = send_appointment_status_update_email(appointment)
+            logger.info(f"Status update email sent: {send_result}")
+            
+            # Get notification statuses after sending
+            from api.models.medical.appointment_notification import AppointmentNotification
+            recent_notifications = AppointmentNotification.objects.filter(
+                appointment=appointment,
+                event_type='appointment_update'
+            ).order_by('-created_at')[:3]
+            
+            # Include notification status in response
+            notification_statuses = []
+            for notif in recent_notifications:
+                notification_statuses.append({
+                    'id': notif.id,
+                    'type': notif.notification_type,
+                    'status': notif.status,
+                    'created_at': notif.created_at,
+                    'sent_at': notif.sent_time
+                })
             
             serializer = self.get_serializer(appointment)
             return Response({
                 'status': 'success',
                 'message': f'Appointment status updated to {new_status}',
-                'data': serializer.data
+                'data': serializer.data,
+                'notification': {
+                    'email_sent': send_result,
+                    'details': notification_statuses
+                }
             })
         except Exception as e:
             logger.error(f"Error updating appointment status: {str(e)}")
@@ -2209,7 +2254,7 @@ class DoctorAppointmentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['patch'], url_path='status')
     def update_status(self, request, appointment_id=None):
         """
-        Update the status of an appointment and send email notification to the patient
+        Update the status of an appointment
         """
         try:
             appointment = self.get_object()
@@ -2229,6 +2274,14 @@ class DoctorAppointmentViewSet(viewsets.ModelViewSet):
                     'message': f'Invalid status: {new_status}. Valid statuses are: {", ".join(dict(Appointment.STATUS_CHOICES).keys())}'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
+            # Check status transition is valid
+            old_status = appointment.status
+            if not appointment._is_valid_status_transition(old_status, new_status):
+                return Response({
+                    'status': 'error',
+                    'message': f'Invalid status transition from {old_status} to {new_status}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
             # Handle auto-reassignment for cancelled appointments
             if new_status == 'cancelled':
                 cancellation_reason = request.data.get('cancellation_reason')
@@ -2241,7 +2294,6 @@ class DoctorAppointmentViewSet(viewsets.ModelViewSet):
                 # Save the cancellation reason to both notes and the dedicated field
                 appointment.notes = f"Cancelled by Dr. {appointment.doctor.user.get_full_name()}. Reason: {cancellation_reason}\n\n" + (appointment.notes or "")
                 appointment.cancellation_reason = cancellation_reason
-                appointment.cancelled_at = timezone.now()
                 
                 # Find another available doctor in the same department
                 from api.models import Doctor
@@ -2276,32 +2328,105 @@ class DoctorAppointmentViewSet(viewsets.ModelViewSet):
                         
                         # Send reassignment email
                         from api.utils.email import send_appointment_reassignment_email
-                        send_appointment_reassignment_email(appointment, previous_doctor, cancellation_reason)
+                        send_result = send_appointment_reassignment_email(appointment, previous_doctor, cancellation_reason)
                         
                         serializer = self.get_serializer(appointment)
                         return Response({
                             'status': 'success',
                             'message': f'Appointment reassigned to Dr. {available_doctor.user.get_full_name()}',
-                            'data': serializer.data
+                            'data': serializer.data,
+                            'notification': {
+                                'email_sent': send_result,
+                                'type': 'reassignment'
+                            }
                         })
                 
                 # If no available doctor found, proceed with cancellation
                 appointment.status = new_status
                 appointment.save()
+                
+                # Manually trigger the status change notification
+                appointment.handle_status_change(old_status, new_status)
+            elif new_status == 'completed':
+                # Check if medical summary is provided
+                medical_summary = request.data.get('medical_summary')
+                
+                # Ensure medical summary is provided when completing an appointment
+                if not medical_summary:
+                    return Response({
+                        'status': 'error',
+                        'message': 'Medical summary is required when completing an appointment'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Instead of using the model's save() method, which triggers validation,
+                # use direct database update to bypass the appointment date validation
+                from django.db import connection
+                from django.utils import timezone
+                
+                now = timezone.now()
+                
+                # Update the appointment directly in the database
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        UPDATE api_appointment
+                        SET status = %s, medical_summary = %s, completed_at = %s, updated_at = %s
+                        WHERE id = %s
+                        """,
+                        [new_status, medical_summary, now, now, appointment.id]
+                    )
+                
+                # Refresh the appointment from DB
+                appointment = Appointment.objects.get(id=appointment.id)
+                
+                # Manually trigger the status change notification
+                appointment.handle_status_change(old_status, new_status)
+                
+                # Log that we successfully completed the appointment with a summary
+                logger.info(f"Appointment {appointment_id} completed with medical summary by Dr. {appointment.doctor.user.get_full_name()}")
             else:
                 # Regular status update
                 appointment.status = new_status
                 appointment.save()
-            
-            # Send status update email
+                
+                # Manually trigger the status change notification for other status changes
+                appointment.handle_status_change(old_status, new_status)
+                
+            # Get notification statuses after sending
+            from api.models.medical.appointment_notification import AppointmentNotification
             from api.utils.email import send_appointment_status_update_email
-            send_appointment_status_update_email(appointment)
             
+            # Send email notification directly as well
+            send_result = send_appointment_status_update_email(appointment)
+            logger.info(f"Status update email sent: {send_result}")
+            
+            # Get recent notifications for this appointment
+            recent_notifications = AppointmentNotification.objects.filter(
+                appointment=appointment,
+                event_type='appointment_update'
+            ).order_by('-created_at')[:3]
+            
+            # Include notification status in response
+            notification_statuses = []
+            for notif in recent_notifications:
+                notification_statuses.append({
+                    'id': notif.id,
+                    'type': notif.notification_type,
+                    'status': notif.status,
+                    'created_at': notif.created_at,
+                    'sent_at': notif.sent_time
+                })
+            
+            # Return the updated appointment with notification info
             serializer = self.get_serializer(appointment)
             return Response({
                 'status': 'success',
                 'message': f'Appointment status updated to {new_status}',
-                'data': serializer.data
+                'data': serializer.data,
+                'notification': {
+                    'email_sent': send_result,
+                    'details': notification_statuses
+                }
             })
         except Exception as e:
             logger.error(f"Error updating appointment status: {str(e)}")
@@ -2437,51 +2562,209 @@ class DoctorAppointmentViewSet(viewsets.ModelViewSet):
             doctor=user.doctor_profile
         )
         
-        # Calculate statistics
+        try:
+            # Calculate statistics
+            today = timezone.now().date()
+            
+            # Total appointments
+            total = appointments.count()
+            
+            # Today's appointments
+            today_count = appointments.filter(appointment_date__date=today).count()
+            
+            # Upcoming appointments
+            upcoming_count = appointments.filter(
+                appointment_date__gte=timezone.now(),
+                status__in=['pending', 'confirmed', 'rescheduled']
+            ).count()
+            
+            # Completed appointments
+            completed_count = appointments.filter(status='completed').count()
+            
+            # Cancelled appointments
+            cancelled_count = appointments.filter(status='cancelled').count()
+            
+            # No-show appointments
+            no_show_count = appointments.filter(status='no_show').count()
+            
+            # Status distribution
+            status_counts = {}
+            for status_choice, _ in Appointment.STATUS_CHOICES:
+                status_counts[status_choice] = appointments.filter(status=status_choice).count()
+                
+            # Return statistics
+            return Response({
+                'total_appointments': total,
+                'today_appointments': today_count,
+                'upcoming_appointments': upcoming_count,
+                'completed_appointments': completed_count,
+                'cancelled_appointments': cancelled_count,
+                'no_show_appointments': no_show_count,
+                'status_distribution': status_counts
+            })
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': str(e),
+                'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'], url_path='summary')
+    def appointments_summary(self, request):
+        """
+        Return aggregated appointment summary data for the doctor dashboard
+        """
+        user = request.user
+        
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered as a doctor in the system'
+            }, status=status.HTTP_403_FORBIDDEN)
+            
+        # Get doctor's appointments
+        appointments = Appointment.objects.filter(
+            doctor=user.doctor_profile
+        )
+        
+        # Apply date filters if provided
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+        
+        try:
+            if start_date:
+                start_date = timezone.make_aware(
+                    datetime.strptime(start_date, '%Y-%m-%d')
+                )
+                appointments = appointments.filter(appointment_date__gte=start_date)
+            
+            if end_date:
+                end_date = timezone.make_aware(
+                    datetime.strptime(end_date, '%Y-%m-%d')
+                ).replace(hour=23, minute=59, second=59)
+                appointments = appointments.filter(appointment_date__lte=end_date)
+                
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid date format in query params: {e}")
+        
+        # Calculate time periods
         today = timezone.now().date()
+        week_start = today - timezone.timedelta(days=today.weekday())
+        week_end = week_start + timezone.timedelta(days=6)
+        month_start = today.replace(day=1)
+        next_month_start = (month_start + timezone.timedelta(days=32)).replace(day=1)
+        month_end = next_month_start - timezone.timedelta(days=1)
+        next_week_start = week_start + timezone.timedelta(days=7)
+        next_week_end = next_week_start + timezone.timedelta(days=6)
         
-        # Total appointments
-        total = appointments.count()
-        
-        # Today's appointments
-        today_count = appointments.filter(appointment_date__date=today).count()
-        
-        # Upcoming appointments
-        upcoming_count = appointments.filter(
-            appointment_date__gte=timezone.now(),
-            status__in=['pending', 'confirmed', 'rescheduled']
-        ).count()
-        
-        # Completed appointments
-        completed_count = appointments.filter(status='completed').count()
-        
-        # Cancelled appointments
-        cancelled_count = appointments.filter(status='cancelled').count()
-        
-        # No-show appointments
-        no_show_count = appointments.filter(status='no_show').count()
-        
-        # Status distribution
+        # Count appointments by status
         status_counts = {}
         for status_choice, _ in Appointment.STATUS_CHOICES:
             status_counts[status_choice] = appointments.filter(status=status_choice).count()
+        
+        # Count appointments by type
+        type_counts = {}
+        for type_choice, _ in Appointment.APPOINTMENT_TYPE_CHOICES:
+            type_counts[type_choice] = appointments.filter(appointment_type=type_choice).count()
+        
+        # Count appointments by time period
+        today_count = appointments.filter(appointment_date__date=today).count()
+        this_week_count = appointments.filter(
+            appointment_date__date__gte=week_start,
+            appointment_date__date__lte=week_end
+        ).count()
+        this_month_count = appointments.filter(
+            appointment_date__date__gte=month_start,
+            appointment_date__date__lte=month_end
+        ).count()
+        next_week_count = appointments.filter(
+            appointment_date__date__gte=next_week_start,
+            appointment_date__date__lte=next_week_end
+        ).count()
+        
+        # Count appointments by department
+        department_counts = {}
+        departments = appointments.values('department__name').annotate(
+            count=Count('department')
+        ).order_by('-count')
+        
+        for dept in departments:
+            department_counts[dept['department__name']] = dept['count']
+        
+        # Get recent appointments (last 7 days)
+        recent_cutoff = timezone.now() - timezone.timedelta(days=7)
+        recent_appointments = appointments.filter(
+            appointment_date__lte=timezone.now(),
+            appointment_date__gte=recent_cutoff,
+            status__in=['completed', 'no_show', 'cancelled']
+        ).order_by('-appointment_date')[:10]
+        
+        recent_list = []
+        for appt in recent_appointments:
+            recent_list.append(appt.get_appointment_summary())
+        
+        # Get upcoming appointments (next 7 days)
+        upcoming_cutoff = timezone.now() + timezone.timedelta(days=7)
+        upcoming_appointments = appointments.filter(
+            appointment_date__gte=timezone.now(),
+            appointment_date__lte=upcoming_cutoff,
+            status__in=['pending', 'confirmed', 'rescheduled']
+        ).order_by('appointment_date')[:10]
+        
+        upcoming_list = []
+        for appt in upcoming_appointments:
+            upcoming_list.append(appt.get_appointment_summary())
+        
+        # Calculate monthly trends
+        trends = []
+        current_month = timezone.now().month
+        current_year = timezone.now().year
+        
+        # Get data for current month and previous 5 months
+        for i in range(6):
+            month = (current_month - i) % 12
+            if month == 0:
+                month = 12
+            year = current_year if month <= current_month else current_year - 1
             
-        # Return statistics
-        return Response({
-
-            'total_appointments': total,
-            'today_appointments': today_count,
-            'upcoming_appointments': upcoming_count,
-            'completed_appointments': completed_count,
-            'cancelled_appointments': cancelled_count,
-            'no_show_appointments': no_show_count,
-            'status_distribution': status_counts
-        })
-
-            'status': 'error',
-            'message': str(e),
-            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            month_name = datetime(year, month, 1).strftime('%B')
+            
+            month_count = appointments.filter(
+                appointment_date__month=month,
+                appointment_date__year=year
+            ).count()
+            
+            trends.append({
+                'month': month_name,
+                'count': month_count
+            })
+        
+        # Reverse to get chronological order
+        trends.reverse()
+        
+        # Prepare summary data
+        summary_data = {
+            "total_appointments": appointments.count(),
+            "counts": {
+                "by_status": status_counts,
+                "by_type": type_counts,
+                "by_time_period": {
+                    "today": today_count,
+                    "this_week": this_week_count,
+                    "this_month": this_month_count,
+                    "next_week": next_week_count
+                },
+                "by_department": department_counts
+            },
+            "recent_appointments": recent_list,
+            "upcoming_appointments": upcoming_list,
+            "trends": {
+                "by_month": trends
+            }
+        }
+        
+        return Response(summary_data)
 
 class RequestMedicalRecordOTPView(APIView):
     """
@@ -2654,6 +2937,56 @@ class PatientMedicalRecordView(APIView):
                 {"error": "An error occurred while accessing medical records"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class PatientMedicalRecordSummaryView(APIView):
+    """
+    Endpoint for patients to view their medical record summary including appointment history
+    with doctor notes and medical summaries.
+    
+    This endpoint has less strict security than the full medical record access to ensure
+    patients can easily access their appointment summaries. Still requires authentication.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        try:
+            # Check if user has a medical record
+            if not hasattr(request.user, 'medical_record') or request.user.medical_record is None:
+                return Response(
+                    {
+                        "status": "error",
+                        "message": "No medical record found. This will be created after your first completed appointment."
+                    }, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get the medical record
+            medical_record = request.user.medical_record
+            
+            # Log access for audit purposes
+            MedicalRecordAccess.objects.create(
+                user=request.user,
+                access_time=timezone.now(),
+                ip_address=get_client_ip(request)
+            )
+            
+            # Return the medical record data with interactions
+            serializer = PatientMedicalRecordSummarySerializer(medical_record)
+            
+            return Response({
+                "status": "success",
+                "message": "Medical record summary retrieved successfully",
+                "data": serializer.data
+            })
+            
+        except Exception as e:
+            # Log the error
+            logger.error(f"Error accessing medical record summary: {str(e)}")
+            return Response({
+                "status": "error",
+                "message": "An error occurred while accessing medical record summary",
+                "error": str(e) if settings.DEBUG else "Please try again later"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # Helper function to get client IP address for audit logs
 def get_client_ip(request):

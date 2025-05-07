@@ -14,7 +14,9 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 
 # Import MedicalRecord model
-from api.models.medical.medical_record import MedicalRecord
+from api.models.medical.medical_record import MedicalRecord, DoctorInteraction
+from api.models.medical.department import Department
+from api.models.medical.hospital import Hospital
 
 CustomUser = get_user_model()
 
@@ -643,6 +645,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
             'medical_history',
             'allergies',
             'current_medications',
+            'medical_summary',
             'is_insurance_based',
             'insurance_details',
             'payment_status',
@@ -791,6 +794,7 @@ class AppointmentListSerializer(serializers.ModelSerializer):
     status_display = serializers.SerializerMethodField()
     hospital_name = serializers.SerializerMethodField()
     department_name = serializers.SerializerMethodField()
+    patient_name = serializers.SerializerMethodField(read_only=True)
     
     # Add new formatted fields for list view
     formatted_date = serializers.SerializerMethodField(read_only=True)
@@ -823,7 +827,9 @@ class AppointmentListSerializer(serializers.ModelSerializer):
             'status',
             'status_display',
             'chief_complaint',
-            'created_at'
+            'medical_summary',
+            'created_at',
+            'patient_name'
         ]
     
     def get_status_display(self, obj):
@@ -874,6 +880,11 @@ class AppointmentListSerializer(serializers.ModelSerializer):
     def get_doctor_full_name(self, obj):
         if obj.doctor and obj.doctor.user:
             return f"Dr. {obj.doctor.user.first_name} {obj.doctor.user.last_name}"
+        return None
+    
+    def get_patient_name(self, obj):
+        if obj.patient:
+            return f"{obj.patient.first_name} {obj.patient.last_name}"
         return None
 
 class AppointmentCancelSerializer(serializers.Serializer):
@@ -941,4 +952,61 @@ class PatientMedicalRecordSerializer(serializers.ModelSerializer):
             'dosage': treatment.dosage,
             'frequency': treatment.frequency,
             # Exclude notes - these are for medical staff only
-        } for treatment in treatments]     
+        } for treatment in treatments]
+
+# Add new serializers to handle medical record summary with appointment summaries
+
+class DoctorInteractionSerializer(serializers.ModelSerializer):
+    """Serializer for doctor interactions shown in patient records"""
+    doctor_name = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+    hospital_name = serializers.SerializerMethodField()
+    formatted_date = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = DoctorInteraction
+        fields = [
+            'id', 'doctor_name', 'department_name', 'hospital_name',
+            'interaction_date', 'formatted_date', 'interaction_type',
+            'doctor_notes', 'patient_rating'
+        ]
+    
+    def get_doctor_name(self, obj):
+        if obj.doctor:
+            return f"Dr. {obj.doctor.user.get_full_name()}"
+        return "Unknown Doctor"
+    
+    def get_department_name(self, obj):
+        if obj.doctor and obj.doctor.department:
+            return obj.doctor.department.name
+        return "Unknown Department"
+    
+    def get_hospital_name(self, obj):
+        if obj.doctor and obj.doctor.hospital:
+            return obj.doctor.hospital.name
+        return "Unknown Hospital"
+        
+    def get_formatted_date(self, obj):
+        return obj.interaction_date.strftime("%B %d, %Y at %I:%M %p")
+
+class PatientMedicalRecordSummarySerializer(serializers.ModelSerializer):
+    """Detailed serializer for patient medical record summary in dashboard"""
+    interactions = serializers.SerializerMethodField()
+    patient_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = MedicalRecord
+        fields = [
+            'hpn', 'blood_type', 'allergies', 'chronic_conditions', 
+            'last_visit_date', 'patient_name', 'interactions'
+        ]
+    
+    def get_patient_name(self, obj):
+        if obj.user:
+            return obj.user.get_full_name()
+        return "Anonymous Patient"
+    
+    def get_interactions(self, obj):
+        # Get all doctor interactions, ordered by date (newest first)
+        interactions = obj.doctor_interactions.all().order_by('-interaction_date')
+        return DoctorInteractionSerializer(interactions, many=True).data     

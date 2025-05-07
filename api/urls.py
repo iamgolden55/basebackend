@@ -19,13 +19,10 @@ from api.views import (
     departments,
     DoctorAssignmentView,
     pending_hospital_registrations,
-
-
-    doctor_appointments,
     PatientMedicalRecordView,
     RequestMedicalRecordOTPView,
     VerifyMedicalRecordOTPView,
-
+    PatientMedicalRecordSummaryView,
 )
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
@@ -117,8 +114,11 @@ urlpatterns = [
     path('patient/medical-record/request-otp/', RequestMedicalRecordOTPView.as_view(), name='request-medical-record-otp'),
     path('patient/medical-record/verify-otp/', VerifyMedicalRecordOTPView.as_view(), name='verify-medical-record-otp'),
     
+    # New endpoint for medical record summary with appointment summaries
+    path('patient/medical-record/summary/', PatientMedicalRecordSummaryView.as_view(), name='patient-medical-record-summary'),
+    
     # New endpoint for doctor's appointments
-    path('doctor-appointments/', doctor_appointments, name='doctor-appointments'),
+    # path('doctor-appointments/', doctor_appointments, name='doctor-appointments'),
 
 ]
 

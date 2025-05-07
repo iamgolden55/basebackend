@@ -708,4 +708,43 @@ class AppointmentNotification(TimestampedModel):
                 subject=subject,
                 message=sms_message,
                 scheduled_time=instruction_time
-            ) 
+            )
+            
+    @classmethod
+    def create_status_update_notification(cls, appointment):
+        """Create notification for appointment status updates"""
+        subject = f"Appointment Status Update - {appointment.appointment_id}"
+        
+        # Get status display name
+        status_display = dict(appointment._meta.get_field('status').choices).get(appointment.status, appointment.status)
+        
+        # Create email notification
+        email_notification = cls.objects.create(
+            appointment=appointment,
+            notification_type='email',
+            event_type='appointment_update',
+            recipient=appointment.patient,
+            subject=subject,
+            template_name='appointment_status_update',
+            scheduled_time=timezone.now()
+        )
+        
+        # Create SMS notification if phone number available
+        if appointment.patient.phone:
+            sms_message = (
+                f"Your appointment (ID: {appointment.appointment_id}) "
+                f"status has been updated to: {status_display}. "
+                f"Date: {appointment.appointment_date.strftime('%d/%m/%Y %I:%M %p')}. "
+                f"Please check your email for details."
+            )
+            sms_notification = cls.objects.create(
+                appointment=appointment,
+                notification_type='sms',
+                event_type='appointment_update',
+                recipient=appointment.patient,
+                subject=subject,
+                message=sms_message,
+                scheduled_time=timezone.now()
+            )
+            
+        return email_notification 
