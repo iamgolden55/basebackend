@@ -27,7 +27,7 @@ def get_location_from_ip(ip_address):
             'country': None,
             'city': None,
             'state': None
-        }
+        } 
 
 def get_client_ip(request):
     """
