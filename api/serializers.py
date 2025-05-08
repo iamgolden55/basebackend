@@ -212,7 +212,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
         }),
         error_messages={
             'required': 'Secondary languages are required.'
-        }
+        },
+        required=False
     )
     custom_language = serializers.CharField(
         required=False,
@@ -234,6 +235,40 @@ class UserProfileSerializer(serializers.ModelSerializer):
     
     def get_full_name(self, obj):
         return f"{obj.first_name} {obj.last_name}".strip()
+        
+    def to_representation(self, instance):
+        """Properly convert secondary_languages from various formats to a list"""
+        data = super().to_representation(instance)
+        
+        # Handle secondary_languages conversion
+        if 'secondary_languages' in data:
+            secondary_languages = instance.secondary_languages
+            
+            # Handle the case when it's None
+            if secondary_languages is None:
+                data['secondary_languages'] = []
+            # Handle the case when it's already a list (but stored as a string representation)
+            elif isinstance(secondary_languages, str):
+                # Check if it's a string representation of a list like "['yo', 'en']"
+                if secondary_languages.startswith('[') and secondary_languages.endswith(']'):
+                    # Remove brackets and split by comma
+                    langs = secondary_languages.strip('[]')
+                    # Handle empty list case
+                    if not langs:
+                        data['secondary_languages'] = []
+                    else:
+                        # Split by comma and remove quotes and whitespace
+                        data['secondary_languages'] = [
+                            lang.strip().strip("'").strip('"') 
+                            for lang in langs.split(',')
+                        ]
+                # Handle the case when it's a comma-separated string like "yoruba,hausa"
+                else:
+                    data['secondary_languages'] = [
+                        lang.strip() for lang in secondary_languages.split(',') if lang.strip()
+                    ]
+                    
+        return data
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
@@ -257,9 +292,32 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             'gender': user.gender,
             'has_completed_onboarding': user.has_completed_onboarding,
             'preferred_language': user.preferred_language,
-            'secondary_languages': user.secondary_languages,
             'custom_language': user.custom_language
         }
+        
+        # Handle secondary_languages conversion
+        secondary_languages = user.secondary_languages
+        if secondary_languages is None:
+            user_data['secondary_languages'] = []
+        elif isinstance(secondary_languages, str):
+            # Check if it's a string representation of a list like "['yo', 'en']"
+            if secondary_languages.startswith('[') and secondary_languages.endswith(']'):
+                # Remove brackets and split by comma
+                langs = secondary_languages.strip('[]')
+                # Handle empty list case
+                if not langs:
+                    user_data['secondary_languages'] = []
+                else:
+                    # Split by comma and remove quotes and whitespace
+                    user_data['secondary_languages'] = [
+                        lang.strip().strip("'").strip('"') 
+                        for lang in langs.split(',')
+                    ]
+            # Handle the case when it's a comma-separated string like "yoruba,hausa"
+            else:
+                user_data['secondary_languages'] = [
+                    lang.strip() for lang in secondary_languages.split(',') if lang.strip()
+                ]
         
         # Add user_data to the response
         data['user_data'] = user_data
@@ -942,3 +1000,22 @@ class PatientMedicalRecordSerializer(serializers.ModelSerializer):
             'frequency': treatment.frequency,
             # Exclude notes - these are for medical staff only
         } for treatment in treatments]     
+
+class ChangePasswordSerializer(serializers.Serializer):
+    current_password = serializers.CharField(required=True)
+    new_password = serializers.CharField(
+        required=True,
+        min_length=8,
+        error_messages={
+            'min_length': 'Password must be at least 8 characters long.'
+        }
+    )
+    confirm_password = serializers.CharField(required=True)
+    
+    def validate(self, data):
+        # Check that the new password and confirm password match
+        if data['new_password'] != data['confirm_password']:
+            raise serializers.ValidationError({
+                'confirm_password': "New passwords don't match."
+            })
+        return data     

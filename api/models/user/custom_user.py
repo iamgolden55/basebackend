@@ -136,9 +136,35 @@ class CustomUser(AbstractUser):
         default='patient'
     )
 
+    # Ethnicity choices
+    ETHNICITY_CHOICES = [
+        ('african', 'African'),
+        ('arab', 'Arab'),
+        ('asian', 'Asian'),
+        ('caribbean', 'Caribbean'),
+        ('caucasian', 'Caucasian/White'),
+        ('hispanic', 'Hispanic/Latino'),
+        ('mediterranean', 'Mediterranean'),
+        ('middle_eastern', 'Middle Eastern'),
+        ('mixed', 'Mixed/Multiple ethnic groups'),
+        ('pacific_islander', 'Pacific Islander'),
+        ('south_asian', 'South Asian'),
+        ('southeast_asian', 'Southeast Asian'),
+        ('indigenous', 'Indigenous/Aboriginal'),
+        ('other', 'Other'),
+        ('prefer_not_to_say', 'Prefer not to say')
+    ]
+
     # Extra fields for the user
     date_of_birth = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=10, choices=[('male', 'Male'), ('female', 'Female'), ('other', 'Other')], null=True, blank=True)
+    ethnicity = models.CharField(
+        max_length=20, 
+        choices=ETHNICITY_CHOICES, 
+        null=True, 
+        blank=True,
+        help_text="Patient's ethnic background (used for health risk assessments)"
+    )
     country = models.CharField(max_length=100, null=True, blank=True)
     state = models.CharField(max_length=100, null=True, blank=True)
     city = models.CharField(max_length=100, null=True, blank=True)

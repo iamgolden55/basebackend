@@ -36,5 +36,16 @@ class HospitalRegistration(models.Model):
             # Update user's primary hospital
             self.user.hospital = self.hospital
             self.user.save()
+        
+        # Create in-app notification for the user
+        from api.models.notifications.in_app_notification import InAppNotification
+        
+        InAppNotification.create_notification(
+            user=self.user,
+            title="Hospital Registration Approved",
+            message=f"Your registration with {self.hospital.name} has been approved. You can now book appointments and access services.",
+            notification_type="hospital_registration",
+            reference_id=f"REG-{self.id}"
+        )
             
         self.save() 

@@ -1,7 +1,21 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from api.views import UserProfileUpdateView, PasswordResetRequestView, PasswordResetConfirmView, UpdateOnboardingStatusView
-from api.views import (
+from django.views.generic import RedirectView
+
+# Auth views
+from api.views.auth.authentication import (
+    UserProfileUpdateView,
+    PasswordResetRequestView,
+    PasswordResetConfirmView,
+    PatientMedicalRecordView,
+    RequestMedicalRecordOTPView,
+    VerifyMedicalRecordOTPView,
+    UpdateOnboardingStatusView,
+    ChangePasswordView,
+)
+
+# Hospital views
+from api.views.hospital.hospital_views import (
     HospitalRegistrationViewSet,
     UserHospitalRegistrationsView,
     SetPrimaryHospitalView,
@@ -11,22 +25,21 @@ from api.views import (
     approve_registration,
     HospitalLocationViewSet,
     hospital_registration,
-    AppointmentViewSet,
-    DoctorAppointmentViewSet,
     has_primary_hospital,
     check_user_exists,
     appointment_types,
     departments,
-    DoctorAssignmentView,
     pending_hospital_registrations,
-
-
     doctor_appointments,
-    PatientMedicalRecordView,
-    RequestMedicalRecordOTPView,
-    VerifyMedicalRecordOTPView,
-
+    AppointmentViewSet,
 )
+
+# Medical views
+from api.views.medical.medical_views import DoctorAssignmentView
+
+# Notification views
+from api.views.utils.notification_views import InAppNotificationViewSet
+
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
@@ -35,7 +48,7 @@ from rest_framework.response import Response
 router = DefaultRouter()
 router.register(r'hospitals', HospitalLocationViewSet, basename='hospital')
 router.register(r'appointments', AppointmentViewSet, basename='appointment')
-router.register(r'doctor-appointments', DoctorAppointmentViewSet, basename='doctor-appointment')
+router.register(r'notifications', InAppNotificationViewSet, basename='notification')
 
 @api_view(['GET'])
 def health_check(request):
@@ -45,6 +58,7 @@ urlpatterns = [
     path('profile/', UserProfileUpdateView.as_view(), name='profile-update'),
     path('password/reset/', PasswordResetRequestView.as_view(), name='password-reset-request'),
     path('password/reset/confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
+    path('password/change/', ChangePasswordView.as_view(), name='password-change'),
     path('onboarding/update/', UpdateOnboardingStatusView.as_view(), 
          name='update-onboarding-status'),
     
@@ -102,16 +116,15 @@ urlpatterns = [
          pending_hospital_registrations, 
          name='pending-hospital-registrations'),
     
-    # Appointment endpoints
+    path('', include(router.urls)),
+    
+    path('health-check/', health_check, name='health-check'),
+    
+    # New endpoints for appointment booking
     path('appointment-types/', appointment_types, name='appointment-types'),
     path('departments/', departments, name='departments'),
     path('doctor-assignment/', DoctorAssignmentView.as_view(), name='doctor-assignment'),
     
-
-    # Router includes all viewsets
-    path('', include(router.urls)),
-    
-    path('health-check/', health_check, name='health-check'),
     # New endpoint for patient medical records - secure access
     path('patient/medical-record/', PatientMedicalRecordView.as_view(), name='patient-medical-record'),
     path('patient/medical-record/request-otp/', RequestMedicalRecordOTPView.as_view(), name='request-medical-record-otp'),
@@ -119,7 +132,22 @@ urlpatterns = [
     
     # New endpoint for doctor's appointments
     path('doctor-appointments/', doctor_appointments, name='doctor-appointments'),
+    
+    # New endpoint for doctor-appointments with appointment ID - redirects to appointments endpoint
+    path('doctor-appointments/<str:appointment_id>/', 
+         lambda request, appointment_id: RedirectView.as_view(
+             url='/api/appointments/{}/'.format(appointment_id), 
+             permanent=True
+         )(request), 
+         name='doctor-appointments-detail'),
 
+    # New endpoint for doctor-appointments status update
+    path('doctor-appointments/<str:appointment_id>/status/', 
+         lambda request, appointment_id: RedirectView.as_view(
+             url='/api/appointments/{}/status/'.format(appointment_id), 
+             permanent=True
+         )(request), 
+         name='doctor-appointments-status'),
 ]
 
 # Available endpoints:
@@ -140,12 +168,3 @@ urlpatterns = [
 # POST /api/appointments/<id>/complete/ - Mark an appointment as completed
 # GET /api/appointments/upcoming/ - Get upcoming appointments
 # GET /api/appointments/today/ - Get today's appointments
-
-# Doctor appointment endpoints:
-# GET /api/doctor-appointments/ - List all appointments for the logged-in doctor
-# GET /api/doctor-appointments/<id>/ - Get details of a specific appointment
-# PATCH /api/doctor-appointments/<id>/status/ - Update appointment status
-# PATCH /api/doctor-appointments/<id>/notes/ - Update appointment notes
-# GET /api/doctor-appointments/upcoming/ - Get upcoming appointments
-# GET /api/doctor-appointments/today/ - Get today's appointments
-# GET /api/doctor-appointments/stats/ - Get appointment statistics

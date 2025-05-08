@@ -1,0 +1,102 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<div class="email-container">
+    <div class="header">
+        <h1>Appointment Status Update 🏥</h1>
+    </div>
+
+    <div class="content">
+        <p>Hello {{ patient_name }},</p>
+        
+        {% if is_confirmed %}
+        <p>Your appointment has been <strong>confirmed</strong> by your doctor! Here are the details:</p>
+        {% elif is_cancelled %}
+        <p>Your appointment has been <strong>cancelled</strong>. {% if cancellation_reason %}Reason: {{ cancellation_reason }}{% endif %}</p>
+        {% elif is_completed %}
+        <p>Your appointment has been marked as <strong>completed</strong>. Thank you for visiting us!</p>
+        
+        <div class="medical-summary-notification">
+            <p><strong>Important:</strong> Your doctor has added a medical summary to your record. This includes:</p>
+            <ul>
+                <li>Diagnosis information</li>
+                <li>Treatment recommendations</li>
+                <li>Medication instructions</li>
+                <li>Follow-up plans</li>
+            </ul>
+            <p>You can view your complete medical summary by visiting your <a href="{{ dashboard_url }}">Patient Dashboard</a> and selecting the "Medical Records" tab.</p>
+        </div>
+        {% else %}
+        <p>The status of your appointment has been updated to <strong>{{ appointment_status }}</strong>.</p>
+        {% endif %}
+        
+        <div class="appointment-details">
+            <div class="detail-row">
+                <span class="label">Appointment ID:</span>
+                <span class="value">{{ appointment_id }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Doctor:</span>
+                <span class="value">{{ doctor_name }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Department:</span>
+                <span class="value">{{ department_name }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Hospital:</span>
+                <span class="value">{{ hospital_name }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Date:</span>
+                <span class="value">{{ appointment_date_only }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Time:</span>
+                <span class="value">{{ appointment_time_only }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Type:</span>
+                <span class="value">{{ appointment_type }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Status:</span>
+                <span class="value">{{ appointment_status }}</span>
+            </div>
+        </div>
+
+        {% if is_confirmed %}
+        <div class="important-info">
+            <h3>Important Information</h3>
+            <p>Please remember to bring the following items to your appointment:</p>
+            <ul>
+                <li>A valid ID card</li>
+                <li>Your insurance card (if applicable)</li>
+                <li>List of current medications</li>
+                <li>Any medical reports or test results relevant to this visit</li>
+            </ul>
+            <p>We recommend arriving <strong>15 minutes</strong> before your scheduled appointment time.</p>
+        </div>
+        {% endif %}
+        
+        {% if is_completed %}
+        <div class="follow-up">
+            <h3>Next Steps</h3>
+            <p>To ensure you receive the best possible care:</p>
+            <ul>
+                <li>Review your medical summary in your dashboard</li>
+                <li>Follow the prescribed treatment plan</li>
+                <li>Contact us if you have any questions about your medications or treatment</li>
+                <li>Schedule any recommended follow-up appointments</li>
+            </ul>
+        </div>
+        {% endif %}
+
+        <div class="footer-note">
+            <p>If you have any questions, please contact us at:</p>
+            <p>📞 Phone: {{ hospital_phone|default:"Contact your hospital" }}</p>
+            <p>📧 Email: {{ hospital_email|default:"Contact your hospital" }}</p>
+        </div>
+    </div>
+</div>
+{% endblock %} 

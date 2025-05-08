@@ -4,6 +4,7 @@ from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 import logging
 from .calendar import generate_ics_for_appointment
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +146,7 @@ def send_appointment_status_update_email(appointment):
         appointment: The appointment object with updated status
     
     Returns:
-        bool: True if email sent successfully, False otherwise
+        dict: Information about the email sending status
     """
     try:
         frontend_url = os.environ.get('NEXTJS_URL', '').rstrip('/')
@@ -159,73 +160,128 @@ def send_appointment_status_update_email(appointment):
         patient_name = serializer_data.get('patient_name')
         if not patient_name:
             patient_name = appointment.patient.email
-        
+            
+        # Get appropriate context based on appointment status
         context = {
             'patient_name': patient_name,
             'appointment_id': appointment.appointment_id,
-            'doctor_name': serializer_data.get('doctor_full_name'),
-            'department_name': serializer_data.get('department_name'),
-            'hospital_name': serializer_data.get('hospital_name'),
-            'appointment_date': serializer_data.get('formatted_date_time'),
-            'appointment_date_only': serializer_data.get('formatted_date'),
-            'appointment_time_only': serializer_data.get('formatted_time'),
-            'appointment_status': serializer_data.get('status_display'),
-            'appointment_status_code': appointment.status,
-            'frontend_url': frontend_url,
-            'is_cancelled': appointment.status == 'cancelled',
-            'cancellation_reason': appointment.cancellation_reason if appointment.status == 'cancelled' else None,
-            'is_completed': appointment.status == 'completed',
-            'is_confirmed': appointment.status == 'confirmed',
+            'appointment_date': appointment.appointment_date,
+            'appointment_date_only': appointment.appointment_date.strftime('%d %B, %Y'),
+            'appointment_time_only': appointment.appointment_date.strftime('%I:%M %p'),
+            'doctor_name': f"Dr. {appointment.doctor.user.get_full_name()}",
+            'department_name': appointment.department.name,
+            'hospital_name': appointment.hospital.name,
             'appointment_type': serializer_data.get('formatted_appointment_type'),
-            'calendar_link_included': True,
-            'important_notes': serializer_data.get('important_notes')
+            'appointment_status': serializer_data.get('status_display'),
+            'frontend_url': frontend_url,
+            'hospital_phone': appointment.hospital.phone,
+            'hospital_email': appointment.hospital.email,
+            # Flags for template conditionals
+            'is_confirmed': appointment.status == 'confirmed',
+            'is_cancelled': appointment.status == 'cancelled',
+            'is_completed': appointment.status == 'completed',
+            'cancellation_reason': appointment.cancellation_reason if hasattr(appointment, 'cancellation_reason') else None,
         }
         
+        # Special context for completed appointments
+        if appointment.status == 'completed':
+            # Include dashboard URL for accessing medical records
+            dashboard_url = f"{frontend_url}/dashboard/medical-records"
+            context['dashboard_url'] = dashboard_url
+        
+        # Add calendar attachment for confirmed appointments
+        if appointment.status == 'confirmed':
+            # Get calendar data from appointment
+            from api.utils.calendar import generate_ics_for_appointment
+            ics_content = generate_ics_for_appointment(appointment)
+            
+            # Important notes
+            context['important_notes'] = [
+                'Please arrive 15 minutes before your appointment',
+                'Bring your ID and insurance card',
+                'Bring any relevant medical records'
+            ]
+        else:
+            ics_content = None
+        
+        # Also create notification records in the database
+        from api.models.medical.appointment_notification import AppointmentNotification
+        notification = AppointmentNotification.create_status_update_notification(appointment)
+            
+        # Send the actual email
+        subject = f"Appointment Status Update - {appointment.appointment_id}"
+        to_email = appointment.patient.email
+        
+        # Generate HTML content
         html_message = render_to_string('email/appointment_status_update.html', context)
         plain_message = strip_tags(html_message)
         
         # Create email message
         email = EmailMessage(
-            subject=f'Appointment Status Update - {appointment.appointment_id}',
+            subject=subject,
             body=html_message,
             from_email=os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@phb.com'),
-            to=[appointment.patient.email]
+            to=[to_email]
         )
         email.content_subtype = "html"
         
-        # Generate and attach the calendar file if appointment is still active
-        if appointment.status in ['confirmed', 'pending', 'rescheduled']:
-            try:
-                ics_content = generate_ics_for_appointment(appointment)
-                email.attach(
-                    f'appointment_{appointment.appointment_id}.ics',
-                    ics_content,
-                    'text/calendar'
-                )
-                logger.info(f"Calendar attachment generated for appointment {appointment.appointment_id}")
-            except Exception as e:
-                logger.error(f"Failed to generate calendar attachment: {str(e)}")
+        # Add calendar attachment if necessary
+        calendar_attached = False
+        if appointment.status == 'confirmed' and ics_content:
+            email.attach(
+                f'appointment_{appointment.appointment_id}.ics',
+                ics_content,
+                'text/calendar'
+            )
+            calendar_attached = True
+            logger.info(f"Calendar attachment added for appointment {appointment.appointment_id}")
         
         # Send the email
         email.send(fail_silently=False)
         
-        logger.info(f"Appointment status update email sent to {appointment.patient.email} for appointment {appointment.appointment_id}")
-        return True
+        # Update notification status
+        if notification:
+            notification.status = 'sent'
+            notification.sent_time = timezone.now()
+            notification.save()
+        
+        # Log the send status
+        logger.info(f"Appointment status update email sent to {to_email} for appointment {appointment.appointment_id}")
+        
+        # Return information about the send status
+        return {
+            'sent': True,
+            'to': to_email,
+            'subject': subject,
+            'template': 'appointment_status_update',
+            'appointment_id': appointment.appointment_id,
+            'status': appointment.status,
+            'notification_id': notification.id if notification else None,
+            'calendar_attached': calendar_attached,
+            'timestamp': timezone.now().isoformat()
+        }
+        
     except Exception as e:
-        logger.error(f"Failed to send appointment status update email: {str(e)}")
-        return False
+        logger.error(f"Error sending appointment status update email: {str(e)}")
+        return {
+            'sent': False,
+            'error': str(e),
+            'appointment_id': appointment.appointment_id,
+            'status': appointment.status,
+            'timestamp': timezone.now().isoformat()
+        }
 
 def send_appointment_reassignment_email(appointment, previous_doctor, cancellation_reason):
     """
-    Send an email notification when an appointment is reassigned to another doctor
+    Send an email when an appointment is reassigned to another doctor
     
     Args:
-        appointment: The appointment object that has been reassigned
-        previous_doctor: The doctor who was previously assigned
-        cancellation_reason: The reason the original doctor cancelled
+        appointment: The appointment object with the new doctor
+        previous_doctor: The original doctor who is no longer available
+        cancellation_reason: The reason the original doctor cannot fulfill the appointment
     
     Returns:
-        bool: True if email sent successfully, False otherwise
+        dict: Information about the email sending status
     """
     try:
         frontend_url = os.environ.get('NEXTJS_URL', '').rstrip('/')
@@ -240,32 +296,67 @@ def send_appointment_reassignment_email(appointment, previous_doctor, cancellati
         if not patient_name:
             patient_name = appointment.patient.email
         
-        # Get previous doctor's name
+        # Previous doctor's name
         previous_doctor_name = f"Dr. {previous_doctor.user.get_full_name()}"
+        
+        # New doctor's name
+        new_doctor_name = serializer_data.get('doctor_full_name')
         
         context = {
             'patient_name': patient_name,
             'appointment_id': appointment.appointment_id,
             'previous_doctor_name': previous_doctor_name,
-            'new_doctor_name': serializer_data.get('doctor_full_name'),
+            'doctor_name': new_doctor_name,
             'department_name': serializer_data.get('department_name'),
             'hospital_name': serializer_data.get('hospital_name'),
             'appointment_date': serializer_data.get('formatted_date_time'),
             'appointment_date_only': serializer_data.get('formatted_date'),
             'appointment_time_only': serializer_data.get('formatted_time'),
-            'cancellation_reason': cancellation_reason,
             'frontend_url': frontend_url,
+            'cancellation_reason': cancellation_reason,
             'appointment_type': serializer_data.get('formatted_appointment_type'),
-            'calendar_link_included': True,
-            'important_notes': serializer_data.get('important_notes')
+            'calendar_link_included': True
         }
         
-        html_message = render_to_string('email/appointment_reassignment.html', context)
+        # Create notification record in the database
+        from api.models.medical.appointment_notification import AppointmentNotification
+        
+        notification = AppointmentNotification.objects.create(
+            appointment=appointment,
+            notification_type='email',
+            event_type='appointment_reassigned',
+            recipient=appointment.patient,
+            subject=f"Appointment Reassigned - {appointment.appointment_id}",
+            template_name='appointment_reassigned',
+            status='pending',
+            scheduled_time=timezone.now()
+        )
+        
+        # Create SMS notification if patient has phone
+        sms_notification = None
+        if appointment.patient.phone:
+            sms_notification = AppointmentNotification.objects.create(
+                appointment=appointment,
+                notification_type='sms',
+                event_type='appointment_reassigned',
+                recipient=appointment.patient,
+                subject=f"Appointment Reassigned - {appointment.appointment_id}",
+                message=(
+                    f"Your appointment has been reassigned from {previous_doctor_name} to {new_doctor_name}. "
+                    f"Same date and time: {appointment.appointment_date.strftime('%d/%m/%Y at %I:%M %p')}. "
+                    f"Please check your email for details."
+                ),
+                status='pending',
+                scheduled_time=timezone.now()
+            )
+        
+        # Render the email template
+        html_message = render_to_string('email/appointment_reassigned.html', context)
         plain_message = strip_tags(html_message)
         
         # Create email message
         email = EmailMessage(
-            subject=f'Your Appointment Has Been Reassigned - {appointment.appointment_id}',
+            subject=f'Appointment Reassigned - {appointment.appointment_id}',
             body=html_message,
             from_email=os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@phb.com'),
             to=[appointment.patient.email]
@@ -273,6 +364,7 @@ def send_appointment_reassignment_email(appointment, previous_doctor, cancellati
         email.content_subtype = "html"
         
         # Generate and attach the calendar file
+        calendar_attached = False
         try:
             ics_content = generate_ics_for_appointment(appointment)
             email.attach(
@@ -280,15 +372,39 @@ def send_appointment_reassignment_email(appointment, previous_doctor, cancellati
                 ics_content,
                 'text/calendar'
             )
-            logger.info(f"Calendar attachment generated for appointment {appointment.appointment_id}")
+            logger.info(f"Calendar attachment generated for reassigned appointment {appointment.appointment_id}")
+            calendar_attached = True
         except Exception as e:
-            logger.error(f"Failed to generate calendar attachment: {str(e)}")
+            logger.error(f"Failed to generate calendar attachment for reassigned appointment: {str(e)}")
         
         # Send the email
         email.send(fail_silently=False)
         
+        # Update notification status to 'sent'
+        notification.status = 'sent'
+        notification.sent_time = timezone.now()
+        notification.save()
+        
+        if sms_notification:
+            sms_notification.status = 'sent'
+            sms_notification.sent_time = timezone.now()
+            sms_notification.save()
+        
         logger.info(f"Appointment reassignment email sent to {appointment.patient.email} for appointment {appointment.appointment_id}")
-        return True
+        
+        return {
+            'success': True,
+            'recipient': appointment.patient.email,
+            'notification_id': notification.id,
+            'sms_notification_id': sms_notification.id if sms_notification else None,
+            'notification_status': 'sent',
+            'calendar_attached': calendar_attached,
+            'sent_at': timezone.now().isoformat()
+        }
     except Exception as e:
         logger.error(f"Failed to send appointment reassignment email: {str(e)}")
-        return False 
+        return {
+            'success': False,
+            'error': str(e),
+            'recipient': getattr(appointment, 'patient', {}).get('email', 'unknown')
+        } 

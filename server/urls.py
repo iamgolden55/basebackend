@@ -1,14 +1,14 @@
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework_simplejwt.views import TokenRefreshView, TokenObtainPairView
-from api.views import (
+from api.views.auth.authentication import (
     UserRegistrationView, 
     EmailVerificationView, 
     VerifyEmailToken,
     VerifyLoginOTPView,
-    LoginView,
     CustomTokenObtainPairView
 )
+from api.views.auth.authentication import LoginView
 from django.conf import settings
 from django.conf.urls.static import static
 
