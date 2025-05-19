@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hospital Administrator Account Created</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            background-color: #f9f9f9;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            text-align: center;
+            padding: 20px 0;
+            border-bottom: 2px solid #007bff;
+        }
+        .header img {
+            max-width: 200px;
+            height: auto;
+        }
+        .content {
+            padding: 30px 20px;
+        }
+        .credentials-box {
+            background-color: #f0f7ff;
+            border-left: 4px solid #007bff;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .btn {
+            display: inline-block;
+            background-color: #007bff;
+            color: white;
+            text-decoration: none;
+            padding: 12px 25px;
+            border-radius: 5px;
+            margin: 20px 0;
+            font-weight: bold;
+            text-align: center;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px;
+            font-size: 12px;
+            color: #777;
+            border-top: 1px solid #eee;
+        }
+        .warning {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .security-note {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 30px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Hospital Administrator Account</h1>
+        </div>
+        <div class="content">
+            <h2>Welcome to the Public Health Bureau!</h2>
+            <p>An administrator account has been created for <strong>{{ hospital_name }}</strong>.</p>
+            
+            <div class="credentials-box">
+                <h3>Your Login Credentials</h3>
+                <p><strong>Hospital Code:</strong> {{ hospital_code }}</p>
+                <p><strong>Username/Login Email:</strong> {{ admin_email }}</p>
+                <p><strong>Password:</strong> {{ admin_password }}</p>
+                <p><em>Please keep these credentials secure.</em></p>
+            </div>
+            
+            <div style="background-color: #f8f9fa; border-left: 4px solid #5bc0de; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                <h4 style="margin-top: 0; color: #0c5460;">⚠️ Important Information About Your Login</h4>
+                <ul style="margin-bottom: 0;">
+                    <li><strong>We've created a secure PHB username for your admin account:</strong> {{ admin_email }}</li>
+                    <li>This is <strong>only</strong> for logging into the PHB admin portal - it's NOT an actual email inbox.</li>
+                    <li>You'll continue to receive communications at your real email address: {{ contact_email }}</li>
+                    <li>When logging in, you must use all three credentials: hospital code, PHB username, and password.</li>
+                    <li>This username format enhances security by making admin accounts harder to guess.</li>
+                </ul>
+            </div>
+            
+            {% if is_development %}
+            <div class="warning">
+                <p><strong>Note:</strong> This is a development environment. In production, you will receive a unique secure password.</p>
+            </div>
+            {% endif %}
+
+            <p>You can log in to your hospital admin dashboard using the link below:</p>
+            <a href="{{ login_url }}" class="btn">Access Admin Dashboard</a>
+            
+            <p>As a hospital administrator, you will have access to:</p>
+            <ul>
+                <li>Manage hospital staff</li>
+                <li>Review and approve patient registrations</li>
+                <li>Generate reports</li>
+                <li>Configure hospital settings</li>
+                <li>Monitor department operations</li>
+            </ul>
+            
+            <div class="credentials-box" style="background-color: #fff3cd; border-left-color: #ffc107;">
+                <p><strong>IMPORTANT:</strong> For security reasons, you will be <span style="color: #d9534f; font-weight: bold;">required to change this temporary password</span> when you first log in.</p>
+            </div>
+            
+            <div class="security-note">
+                <p><strong>Important Security Information:</strong></p>
+                <p>Your first login will include these mandatory security steps:</p>
+                <ol>
+                    <li>Enter your hospital code, email and temporary password</li>
+                    <li>Complete two-factor authentication (2FA)</li>
+                    <li>Set a new secure password</li>
+                </ol>
+                <p>We implement strict security protocols for all hospital administrator accounts to protect sensitive medical data.</p>
+                <p>This email was generated automatically at {{ timestamp }}.</p>
+            </div>
+        </div>
+        <div class="footer">
+            <p>&copy; 2025 Public Health Bureau. All rights reserved.</p>
+            <p>Please do not reply to this email. For support, please contact our support team.</p>
+        </div>
+    </div>
+</body>
+</html>

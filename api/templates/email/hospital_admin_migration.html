@@ -1,0 +1,192 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hospital Admin Security Update</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            color: #333333;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            text-align: center;
+            padding: 30px 0;
+            border-bottom: 1px solid #eeeeee;
+            background: linear-gradient(to right, #006699, #004466);
+            color: white;
+            border-radius: 8px 8px 0 0;
+        }
+        .logo-text {
+            font-size: 32px;
+            font-weight: 700;
+            color: #ffffff;
+            text-decoration: none;
+            letter-spacing: -1px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .logo-subtext {
+            font-size: 14px;
+            color: #e0e0e0;
+            margin-top: 4px;
+            letter-spacing: 0.5px;
+        }
+        .hospital-name {
+            font-size: 18px;
+            font-weight: 500;
+            margin-top: 10px;
+            color: #ffffff;
+        }
+        .content {
+            padding: 30px 20px;
+            text-align: left;
+        }
+        .info-box {
+            background-color: #f0f7ff;
+            border: 2px solid #cce0ff;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 25px 0;
+        }
+        .hospital-code {
+            font-size: 24px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            color: #003366;
+            margin: 10px 0;
+            font-family: monospace;
+            text-align: center;
+            padding: 10px;
+            background-color: #e6f0ff;
+            border-radius: 4px;
+        }
+        .warning {
+            font-size: 13px;
+            color: #666666;
+            margin-top: 20px;
+        }
+        .footer {
+            margin-top: 40px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-top: 1px solid #eeeeee;
+            text-align: center;
+            font-size: 13px;
+            color: #666666;
+            border-radius: 0 0 8px 8px;
+        }
+        .important-notice {
+            background-color: #fffdf0;
+            border: 1px solid #ffe0a0;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+            font-size: 14px;
+            color: #856404;
+        }
+        .button {
+            display: inline-block;
+            background-color: #004466;
+            color: white;
+            text-decoration: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin: 20px 0;
+        }
+        .step {
+            margin-bottom: 15px;
+        }
+        .step-number {
+            display: inline-block;
+            background-color: #004466;
+            color: white;
+            width: 24px;
+            height: 24px;
+            text-align: center;
+            border-radius: 50%;
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 class="logo-text">PHB</h1>
+            <div class="logo-subtext">Public Health Bureau</div>
+            <div class="hospital-name">{{ hospital_name }}</div>
+        </div>
+        
+        <div class="content">
+            <h1 style="font-size: 24px; margin-bottom: 20px;">Important Security Update</h1>
+            
+            <p>Dear {{ admin_name }},</p>
+            
+            <p>We're enhancing security for hospital administrator accounts to better protect sensitive patient data. <strong>Effective {{ effective_date }}</strong>, all hospital administrators will use a new dedicated login system with enhanced security features.</p>
+            
+            <div class="important-notice">
+                <strong>⚠️ Important:</strong> Please save your Hospital Code below. You will need it for all future logins.
+            </div>
+            
+            <div class="info-box">
+                <div style="text-align: center; margin-bottom: 10px;">Your Hospital Code</div>
+                <div class="hospital-code">{{ hospital_code }}</div>
+                <div style="text-align: center; color: #666; font-size: 13px;">Keep this code confidential and secure</div>
+            </div>
+
+            <h2 style="font-size: 18px; margin-top: 30px;">What's Changing:</h2>
+            
+            <ul>
+                <li>Dedicated hospital administrator login portal</li>
+                <li>Two-factor authentication for all administrator logins</li>
+                <li>Hospital code verification for added security</li>
+                <li>Enhanced access logging and monitoring</li>
+            </ul>
+            
+            <h2 style="font-size: 18px; margin-top: 30px;">How to Login After {{ effective_date }}:</h2>
+            
+            <div class="step">
+                <span class="step-number">1</span> Visit the hospital administrator portal at <a href="#" style="color: #004466;">admin.phb.healthcare.org</a>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span> Enter your email, password, and hospital code
+            </div>
+            <div class="step">
+                <span class="step-number">3</span> Complete two-factor authentication via email
+            </div>
+            
+            <p style="margin-top: 30px;">Your current login credentials (email and password) will remain the same. The only addition is the hospital code shown above.</p>
+            
+            <div class="warning">
+                <strong>Note:</strong> If you have any questions or need assistance with this transition, please contact our support team at <a href="mailto:admin-support@phb.healthcare.org" style="color: #004466;">admin-support@phb.healthcare.org</a> or call (555) 123-4567.
+            </div>
+        </div>
+
+        <div class="footer">
+            <p style="margin-bottom: 10px;">This is an official communication from the PHB Hospital Administration System.</p>
+            <p style="margin: 0;">© {% now "Y" %} Public Health Bureau. All rights reserved.</p>
+            <p style="margin-top: 10px; font-size: 12px;">
+                <a href="#" style="color: #666666; text-decoration: none; margin: 0 10px;">Privacy Policy</a>
+                <a href="#" style="color: #666666; text-decoration: none; margin: 0 10px;">Terms of Service</a>
+                <a href="#" style="color: #666666; text-decoration: none; margin: 0 10px;">Contact Support</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+{% endblock %}

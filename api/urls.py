@@ -14,6 +14,18 @@ from api.views.auth.authentication import (
     ChangePasswordView,
 )
 
+# Hospital admin auth views
+from api.views.auth.hospital_admin_auth import (
+    HospitalAdminLoginView,
+    VerifyHospitalAdmin2FAView
+)
+from api.views.auth.hospital_admin_password import HospitalAdminPasswordChangeView
+from api.views.auth.hospital_admin_reset import (
+    HospitalAdminResetRequestView,
+    HospitalAdminResetVerifyView,
+    HospitalAdminResetCompleteView
+)
+
 # Hospital views
 from api.views.hospital.hospital_views import (
     HospitalRegistrationViewSet,
@@ -61,6 +73,29 @@ urlpatterns = [
     path('password/change/', ChangePasswordView.as_view(), name='password-change'),
     path('onboarding/update/', UpdateOnboardingStatusView.as_view(), 
          name='update-onboarding-status'),
+         
+    # ============= HOSPITAL ADMIN AUTH ENDPOINTS =============
+    # Dedicated endpoints for hospital administrators with enhanced security
+    path('hospitals/admin/login/', 
+         HospitalAdminLoginView.as_view(), 
+         name='hospital-admin-login'),
+    path('hospitals/admin/verify-2fa/', 
+         VerifyHospitalAdmin2FAView.as_view(), 
+         name='hospital-admin-verify-2fa'),
+    path('hospitals/admin/change-password/', 
+          HospitalAdminPasswordChangeView.as_view(), 
+          name='hospital-admin-change-password'),
+    
+    # Hospital admin password reset flow with enhanced security
+    path('hospitals/admin/reset-password/request/',
+         HospitalAdminResetRequestView.as_view(),
+         name='hospital-admin-reset-request'),
+    path('hospitals/admin/reset-password/verify/',
+         HospitalAdminResetVerifyView.as_view(),
+         name='hospital-admin-reset-verify'),
+    path('hospitals/admin/reset-password/complete/',
+         HospitalAdminResetCompleteView.as_view(),
+         name='hospital-admin-reset-complete'),
     
     # ============= HOSPITAL REGISTRATION ENDPOINTS =============
     # IMPORTANT: These endpoints are for users to register with EXISTING hospitals.

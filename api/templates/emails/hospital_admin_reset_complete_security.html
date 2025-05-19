@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SECURITY ALERT: Hospital Admin Password Reset Completed</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .header {
+            background-color: #f39c12;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            border-radius: 5px 5px 0 0;
+        }
+        .content {
+            padding: 20px;
+        }
+        .info-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        .info-table th, .info-table td {
+            padding: 10px;
+            border: 1px solid #ddd;
+        }
+        .info-table th {
+            background-color: #f5f5f5;
+            text-align: left;
+        }
+        .alert {
+            background-color: #fcf8e3;
+            border: 1px solid #faebcc;
+            color: #8a6d3b;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 20px;
+        }
+        .footer {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #ddd;
+            font-size: 12px;
+            color: #777;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>SECURITY ALERT: Hospital Admin Password Reset Completed</h2>
+        </div>
+        <div class="content">
+            <p><strong>ATTENTION IT SECURITY TEAM</strong></p>
+            
+            <p>A password reset has been successfully completed for a hospital administrator account. Please review the details below:</p>
+            
+            <table class="info-table">
+                <tr>
+                    <th>Admin Name</th>
+                    <td>{{ admin_name }}</td>
+                </tr>
+                <tr>
+                    <th>Admin Email</th>
+                    <td>{{ admin_email }}</td>
+                </tr>
+                <tr>
+                    <th>Hospital</th>
+                    <td>{{ hospital_name }}</td>
+                </tr>
+                <tr>
+                    <th>Reset Time</th>
+                    <td>{{ reset_time }}</td>
+                </tr>
+                <tr>
+                    <th>IP Address</th>
+                    <td>{{ ip_address }}</td>
+                </tr>
+                <tr>
+                    <th>Location</th>
+                    <td>{% if location %}{{ location.city }}, {{ location.country }}{% else %}Unknown{% endif %}</td>
+                </tr>
+                <tr>
+                    <th>Browser/Device</th>
+                    <td>{{ browser }}</td>
+                </tr>
+            </table>
+            
+            <div class="alert">
+                <p><strong>ALERT INFORMATION:</strong></p>
+                <p>No further action is required unless this activity appears suspicious. Security measures taken:</p>
+                <ul>
+                    <li>Multi-factor identity verification was completed</li>
+                    <li>Previous password has been invalidated</li>
+                    <li>2FA will be required for next login</li>
+                    <li>Account lockouts have been cleared</li>
+                </ul>
+            </div>
+            
+            <p>This automated alert is part of our enhanced security monitoring for hospital administrator accounts.</p>
+        </div>
+        <div class="footer">
+            <p>This is an automated security alert. Please do not reply to this email.</p>
+            <p>&copy; Medical Platform Security Team</p>
+        </div>
+    </div>
+</body>
+</html>

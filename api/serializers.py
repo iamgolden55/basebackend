@@ -1018,4 +1018,89 @@ class ChangePasswordSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 'confirm_password': "New passwords don't match."
             })
-        return data     
+        return data
+
+
+class HospitalAdminLoginSerializer(serializers.Serializer):
+    """
+    Serializer for hospital administrator login with domain validation
+    """
+    email = serializers.EmailField(
+        error_messages={
+            'required': 'Hospital admin email is required',
+            'invalid': 'Please enter a valid hospital email address'
+        }
+    )
+    password = serializers.CharField(
+        write_only=True,
+        style={'input_type': 'password'},
+        error_messages={
+            'required': 'Password is required'
+        }
+    )
+    hospital_code = serializers.CharField(
+        required=True,
+        error_messages={
+            'required': 'Hospital code is required for administrator login'
+        }
+    )
+    
+    def validate_email(self, value):
+        """
+        Validate that the email follows hospital domain patterns.
+        Environment-aware validation that's more permissive in development.
+        """
+        import re
+        from django.conf import settings
+        
+        # Get approved domains from settings or use defaults
+        # This allows for easy configuration in production without code changes
+        approved_domains = getattr(settings, 'APPROVED_HEALTHCARE_DOMAINS', [
+            'medicare.com', 'hospital.org', 'health.gov', 'care.org', 
+            'medical.net', 'clinic.com', 'healthcare.org', 'example.com'
+        ])
+        
+        # Define healthcare-related suffixes for pattern matching
+        healthcare_suffixes = getattr(settings, 'HEALTHCARE_DOMAIN_SUFFIXES', [
+            'hospital', 'medical', 'health', 'care', 'clinic', 'healthcare',
+            'med', 'doctors', 'physicians', 'nursing', 'pharmacy'
+        ])
+        
+        # In development, accept any valid email
+        if settings.DEBUG:
+            # Optional basic validation (ensure it's at least a .com, .org, etc.)
+            if not re.match(r'.+@.+\..+', value):
+                raise serializers.ValidationError("Please enter a valid email address")
+            return value
+            
+        # Extract domain from email
+        domain = value.split('@')[-1]
+        
+        # More comprehensive validation for production:
+        # 1. Check against approved domains list
+        domain_valid = any(domain.endswith(valid_d) for valid_d in approved_domains)
+        
+        # 2. Check against healthcare domain pattern
+        pattern_string = r'.*\.(' + '|'.join(healthcare_suffixes) + r')\.(com|org|net|gov|edu)$'
+        pattern_valid = re.match(pattern_string, domain)
+        
+        # 3. Check hospital-specific domains (hospital.org, somehospital.org, etc.)
+        hospital_domain_valid = ('hospital' in domain)
+        
+        if not (domain_valid or pattern_valid or hospital_domain_valid):
+            raise serializers.ValidationError(
+                "Email must use an approved healthcare domain. "
+                "Contact system administrator if your hospital domain needs to be approved."
+            )
+        
+        return value
+
+
+class Hospital2FAVerificationSerializer(serializers.Serializer):
+    """
+    Serializer for verifying hospital admin 2FA codes
+    """
+    email = serializers.EmailField()
+    verification_code = serializers.CharField(max_length=8)
+    device_id = serializers.CharField(required=False, allow_blank=True)
+    remember_device = serializers.BooleanField(default=False)

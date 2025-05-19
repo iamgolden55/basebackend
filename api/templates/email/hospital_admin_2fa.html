@@ -1,0 +1,205 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hospital Admin 2FA Verification</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            color: #333333;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            text-align: center;
+            padding: 30px 0;
+            border-bottom: 1px solid #eeeeee;
+            background: linear-gradient(to right, #006699, #004466);
+            color: white;
+            border-radius: 8px 8px 0 0;
+        }
+        .logo-text {
+            font-size: 32px;
+            font-weight: 700;
+            color: #ffffff;
+            text-decoration: none;
+            letter-spacing: -1px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        .logo-subtext {
+            font-size: 14px;
+            color: #e0e0e0;
+            margin-top: 4px;
+            letter-spacing: 0.5px;
+        }
+        .hospital-name {
+            font-size: 18px;
+            font-weight: 500;
+            margin-top: 10px;
+            color: #ffffff;
+        }
+        .content {
+            padding: 30px 20px;
+            text-align: center;
+        }
+        .otp-box {
+            background-color: #f0f7ff;
+            border: 2px solid #cce0ff;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 25px 0;
+            text-align: center;
+        }
+        .otp-code {
+            font-size: 32px;
+            font-weight: bold;
+            letter-spacing: 4px;
+            color: #003366;
+            margin: 10px 0;
+            font-family: monospace;
+        }
+        .warning {
+            font-size: 13px;
+            color: #666666;
+            margin-top: 20px;
+            text-align: left;
+        }
+        .security-notice {
+            background-color: #fff8f8;
+            border: 1px solid #ffe0e0;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: left;
+            font-size: 14px;
+            color: #d63031;
+        }
+        .footer {
+            margin-top: 40px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-top: 1px solid #eeeeee;
+            text-align: center;
+            font-size: 13px;
+            color: #666666;
+            border-radius: 0 0 8px 8px;
+        }
+        .device-info {
+            background-color: #f0f7ff;
+            border: 1px solid #cce0ff;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: left;
+            font-size: 14px;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e0ecff;
+        }
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        .info-label {
+            color: #666666;
+        }
+        .info-value {
+            font-weight: 500;
+            color: #333333;
+        }
+        .admin-badge {
+            display: inline-block;
+            background-color: #003366;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            padding: 4px 10px;
+            border-radius: 12px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1 class="logo-text">PHB</h1>
+            <div class="logo-subtext">Public Health Bureau</div>
+            <div class="hospital-name">{{ hospital }}</div>
+        </div>
+        
+        <div class="content">
+            <span class="admin-badge">HOSPITAL ADMINISTRATOR</span>
+            <h1 style="font-size: 24px; margin-bottom: 20px;">Secure Login Verification</h1>
+            
+            <p>Hello {{ user.first_name }}! Please use the following code to complete your hospital administrator login:</p>
+            
+            <div class="otp-box">
+                <div style="color: #003366;">Your Verification Code</div>
+                <div class="otp-code">{{ code }}</div>
+                <div style="color: #003366;">Valid for 10 minutes</div>
+            </div>
+
+            <div class="device-info">
+                <div style="font-weight: 500; margin-bottom: 10px;">Login Attempt Details</div>
+                <div class="info-row">
+                    <span class="info-label">Hospital</span>
+                    <span class="info-value">{{ hospital }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Location</span>
+                    <span class="info-value">{{ location }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Device</span>
+                    <span class="info-value">{{ device }}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Time</span>
+                    <span class="info-value">{{ timestamp }}</span>
+                </div>
+            </div>
+
+            <div class="security-notice">
+                <strong>⚠️ Security Warning:</strong>
+                <p style="margin: 10px 0;">As a hospital administrator, you have access to sensitive medical information. If you did not attempt to login, please contact your IT department and the PHB security team immediately.</p>
+            </div>
+
+            <div class="warning">
+                <ul style="margin: 0; padding-left: 20px;">
+                    <li>This code will expire in 10 minutes.</li>
+                    <li>Never share this code with anyone, including PHB staff or colleagues.</li>
+                    <li>This code can only be used once.</li>
+                    <li>Only login from trusted and secure devices.</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p style="margin-bottom: 10px;">This is an automated message from the secure PHB hospital administration system.</p>
+            <p style="margin: 0;">© {% now "Y" %} Public Health Bureau. All rights reserved.</p>
+            <p style="margin-top: 10px; font-size: 12px;">
+                <a href="{{ frontend_url }}/privacy" style="color: #666666; text-decoration: none; margin: 0 10px;">Privacy Policy</a>
+                <a href="{{ frontend_url }}/terms" style="color: #666666; text-decoration: none; margin: 0 10px;">Terms of Service</a>
+                <a href="{{ frontend_url }}/contact" style="color: #666666; text-decoration: none; margin: 0 10px;">Contact Security Team</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+{% endblock %}

@@ -97,14 +97,15 @@ APPEND_SLASH = False
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
+# Database settings - works both with Docker and without
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "medic_db",
-        "USER": "medic_db",
-        "PASSWORD": "publichealth",
-        "HOST": "localhost",
-        "PORT": "5432",
+        "NAME": os.environ.get("POSTGRES_DB", "medic_db"),
+        "USER": os.environ.get("POSTGRES_USER", "medic_db"),
+        "PASSWORD": os.environ.get("POSTGRES_PASSWORD", "publichealth"),
+        "HOST": os.environ.get("POSTGRES_HOST", "localhost"),  # Uses 'localhost' by default, 'db' in Docker
+        "PORT": os.environ.get("POSTGRES_PORT", "5432"),
     }
 }
 
@@ -228,10 +229,11 @@ PAYMENT_SECURITY = {
 SECURITY_TEAM_EMAIL = os.environ.get('SECURITY_TEAM_EMAIL', 'security@yourdomain.com')
 
 # Cache settings for rate limiting
+# Cache settings - works both with Docker and without
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': 'redis://127.0.0.1:6379/1',
+        'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/1'),  # Uses localhost by default, 'redis' in Docker
         'OPTIONS': {
             'parser_class': 'redis.connection.DefaultParser',
             'pool_class': 'redis.ConnectionPool',

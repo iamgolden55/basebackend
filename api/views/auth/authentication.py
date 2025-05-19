@@ -4,6 +4,7 @@ import uuid
 import secrets
 import random
 import logging
+import time
 
 from django.shortcuts import render
 from django.core.mail import send_mail
@@ -22,6 +23,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.exceptions import ValidationError
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 
 from api.models import CustomUser
@@ -166,11 +168,264 @@ class UserRegistrationView(generics.CreateAPIView):
                 'detail': str(e) if settings.DEBUG else 'Please try again later.'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+# Custom throttle classes for regular user authentication
+class UserLoginRateThrottle(AnonRateThrottle):
+    """Rate limiting for regular user login attempts.
+    
+    This protects the user login endpoint from brute force and
+    dictionary attacks by limiting the rate of attempts.
+    """
+    rate = '5/minute'  # Allow 5 attempts per minute
+    scope = 'user_login'
+    
+    def get_cache_key(self, request, view):
+        # Use the IP address as the unique identifier for rate limiting
+        # This will block repeated attempts from the same source
+        ident = self.get_ident(request)
+        return f"{self.scope}:{ident}"
+
+class FailedLoginTracker:
+    """Tracks failed login attempts to implement more sophisticated protections."""
+    
+    @staticmethod
+    def increment_failed_attempts(username):
+        """Increments the failed attempt counter for a particular username."""
+        key = f"failed_login_{username}"
+        attempts = cache.get(key, 0)
+        attempts += 1
+        
+        # Store the attempt count for 30 minutes
+        cache.set(key, attempts, timeout=1800)
+        
+        # Log suspicious activity after threshold
+        if attempts >= 10:
+            logger.warning(
+                f"SECURITY_WARNING: High number of failed login attempts for {username}. "
+                f"Count: {attempts}"
+            )
+            
+        return attempts
+    
+    @staticmethod
+    def reset_failed_attempts(username):
+        """Resets the failed attempt counter on successful login."""
+        key = f"failed_login_{username}"
+        cache.delete(key)
+
 class CustomTokenObtainPairView(TokenObtainPairView):
     serializer_class = CustomTokenObtainPairSerializer
+    throttle_classes = [UserLoginRateThrottle]
+    
+    def post(self, request, *args, **kwargs):
+        # Get the username from the request
+        username = request.data.get('username', '')
+        
+        # Call the parent post method to attempt authentication
+        response = super().post(request, *args, **kwargs)
+        
+        # If authentication was successful (status code 200), reset the failed attempts counter
+        if response.status_code == status.HTTP_200_OK and username:
+            FailedLoginTracker.reset_failed_attempts(username)
+        # If authentication failed, increment the failed attempts counter
+        elif username:
+            attempts = FailedLoginTracker.increment_failed_attempts(username)
+            
+            # If too many failed attempts, enhance the rate limiting
+            if attempts >= 5:
+                # Force a delay based on the number of attempts to slow down brute force
+                import time
+                time.sleep(min(attempts * 0.5, 5))  # Max delay of 5 seconds
+        
+        return response
 
 class LoginView(APIView):
+    throttle_classes = [UserLoginRateThrottle]  # Add rate limiting to prevent brute force attacks
+    
+    def get_client_ip(self, request):
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+        return ip
+    
+    def send_suspicious_login_email(self, user, ip_address, device_info):
+        """Send email notification about suspicious login attempt"""
+        # Get location info from IP
+        location_info = get_location_from_ip(ip_address)
+        location = f"{location_info.get('city', 'Unknown')}, {location_info.get('country', 'Unknown')}"
+        
+        # Log detailed information about the suspicious login attempt
+        logger.warning(f"SECURITY ALERT: Suspicious login attempt detected")
+        logger.warning(f"User: {user.email}, IP: {ip_address}, Location: {location}, Device: {device_info}")
+        
+        # Generate a password reset token for the user
+        token = secrets.token_urlsafe(32)
+        user.password_reset_token = token
+        user.save()
+        
+        # Ensure the NEXTJS_URL ends with a slash if it doesn't already
+        nextjs_url = os.environ.get('NEXTJS_URL', 'http://localhost:5173/')
+        if not nextjs_url.endswith('/'):
+            nextjs_url += '/'
+        
+        # Construct the reset link with proper formatting
+        reset_link = f"{nextjs_url}reset-password?token={token}"
+        
+        # Debug logging - only log non-sensitive information
+        print(f"Generated password reset token for suspicious login email")
+        print(f"Reset link generated for user: {user.email}")
+        
+        # Log to secure logger with limited info
+        logger.info(f"Password reset token generated for user {user.email} after suspicious login attempt")
+        
+        # Prepare context for email template
+        context = {
+            'user': user,
+            'ip_address': ip_address,
+            'location': location,
+            'device': device_info,
+            'timestamp': timezone.now().strftime('%b %d %Y %H:%M:%S %Z'),
+            'frontend_url': nextjs_url.rstrip('/'),
+            'reset_link': reset_link
+        }
+        
+        # Render the email template
+        try:
+            html_message = render_to_string('email/suspicious_login.html', context)
+            plain_message = strip_tags(html_message)
+            logger.info(f"Email template rendered successfully for {user.email}")
+        except Exception as template_error:
+            logger.error(f"Failed to render email template: {str(template_error)}")
+            return False
+        
+        # Log email configuration
+        email_host = os.environ.get('EMAIL_HOST')
+        email_port = os.environ.get('EMAIL_PORT')
+        email_user = os.environ.get('EMAIL_HOST_USER')
+        from_email = os.environ.get('DEFAULT_FROM_EMAIL')
+        logger.info(f"Email configuration: Host={email_host}, Port={email_port}, User={email_user}, From={from_email}")
+        
+        try:
+            # Attempt to send the email
+            logger.info(f"Attempting to send suspicious login email to {user.email}")
+            result = send_mail(
+                subject='PHB Healthcare - Suspicious Login Attempt',
+                message=plain_message,
+                from_email=from_email,
+                recipient_list=[user.email],
+                html_message=html_message,
+                fail_silently=False,
+            )
+            logger.info(f"Suspicious login email sent to {user.email}, Result: {result}")
+            
+            # Gmail special case warning
+            if user.email == from_email:
+                logger.warning(f"ATTENTION: Sender and recipient emails are the same ({user.email}). Gmail may filter this email.")
+                print(f"WARNING: Sender and recipient emails are the same. Gmail may filter this email to {user.email}.")
+                
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send suspicious login email: {str(e)}")
+            print(f"ERROR: Failed to send suspicious login email to {user.email}: {str(e)}")
+            return False
+        
     def post(self, request):
+        # Implement direct rate limiting by IP
+        ip = self.get_client_ip(request)
+        cache_key = f"login_attempts:{ip}"
+        attempts = cache.get(cache_key, 0)
+        
+        # Get the email from the request for account lockout checks
+        email = request.data.get('email')
+        
+        # Check if account is locked
+        if email:
+            # Check if this account has been verified through password reset
+            verified_key = f"verified_reset:{email}"
+            is_verified_reset = cache.get(verified_key, False)
+            
+            # If the account was verified through password reset, clear any lockouts
+            if is_verified_reset:
+                account_lockout_key = f"account_lockout:{email}"
+                cache.delete(account_lockout_key)
+                cache.delete(f"account_lockout_expiry:{email}")
+                cache.delete(f"account_attempts:{email}")
+                cache.delete(verified_key)  # Clear the verified flag after use
+                logging.info(f"Account lockout bypassed for {email} after password reset verification")
+            else:
+                # Proceed with normal lockout check
+                account_lockout_key = f"account_lockout:{email}"
+                is_locked = cache.get(account_lockout_key, False)
+                
+                if is_locked:
+                    # Get the remaining lockout time
+                    lockout_expiry = cache.get(f"account_lockout_expiry:{email}", 0)
+                    current_time = int(time.time())
+                    remaining_time = max(0, lockout_expiry - current_time)
+                    
+                    # Convert seconds to minutes and seconds
+                    minutes = remaining_time // 60
+                    seconds = remaining_time % 60
+                    time_msg = f"{minutes} minutes and {seconds} seconds" if minutes > 0 else f"{seconds} seconds"
+                    
+                    return Response({
+                        "status": "error",
+                        "message": f"Account temporarily locked. Please try again in {time_msg} or reset your password.",
+                        "account_locked": True,
+                        "remaining_time": remaining_time
+                    }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Increment the counter
+        cache.set(cache_key, attempts + 1, timeout=60)  # Reset after 60 seconds
+        
+        # If we have an email, always check for account lockout threshold first
+        if email:
+            account_attempts_key = f"account_attempts:{email}"
+            account_attempts = cache.get(account_attempts_key, 0) + 1
+            cache.set(account_attempts_key, account_attempts, timeout=1800)  # 30 minutes
+            
+            # Debug logging for account attempts
+            print(f"DEBUG: Account {email} has {account_attempts} failed login attempts")
+            logger.warning(f"Account {email} has {account_attempts} failed login attempts")
+            
+            # Send suspicious login email after 3 failed attempts
+            if account_attempts >= 5:
+                try:
+                    user = CustomUser.objects.get(email=email)
+                    device_info = request.META.get('HTTP_USER_AGENT', 'Unknown Device')
+                    email_sent = self.send_suspicious_login_email(user, ip, device_info)
+                    print(f"DEBUG: Suspicious login email sent to {email}: {email_sent}")
+                except CustomUser.DoesNotExist:
+                    logger.warning(f"Attempted to send suspicious login email to non-existent user: {email}")
+            
+            # If account has had 5 or more failed attempts, lock it for 15 minutes
+            if account_attempts >= 5:
+                # Set account lockout
+                lockout_duration = 15 * 60  # 15 minutes in seconds
+                expiry_time = int(time.time()) + lockout_duration
+                
+                cache.set(account_lockout_key, True, timeout=lockout_duration)
+                cache.set(f"account_lockout_expiry:{email}", expiry_time, timeout=lockout_duration)
+                
+                return Response({
+                    "status": "error",
+                    "message": "Account locked due to too many failed attempts. Please try again in 15 minutes or reset your password.",
+                    "account_locked": True
+                }, status=status.HTTP_403_FORBIDDEN)
+        
+        # If too many attempts from the same IP, block the request
+        if attempts >= 5:  # 5 attempts max for IP-based rate limiting
+            # Regular rate limiting response
+            return Response({
+                "status": "error",
+                "message": "Too many login attempts. Please try again later.",
+                "rate_limited": True
+            }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        
+        # Increment the counter
+        cache.set(cache_key, attempts + 1, timeout=60)  # Reset after 60 seconds
+        
         # Log data safely, masking the password
         log_data = request.data.copy() # Create a copy to avoid modifying the original data
         if 'password' in log_data:
@@ -406,6 +661,23 @@ class VerifyLoginOTPView(APIView):
                 cache_key = f'otp_attempts:{request.META.get("REMOTE_ADDR")}:{email}'
                 cache.delete(cache_key)
                 
+                # Clear any account lockout records on successful verification
+                account_lockout_key = f"account_lockout:{email}"
+                account_attempts_key = f"account_attempts:{email}"
+                lockout_expiry_key = f"account_lockout_expiry:{email}"
+                
+                # Delete all lockout-related cache entries
+                cache.delete(account_lockout_key)
+                cache.delete(account_attempts_key)
+                cache.delete(lockout_expiry_key)
+                
+                # Log the account unlock
+                logger.info(f"Account unlocked after successful OTP verification for user: {email}")
+                
+                # Get client IP and device info for security logging
+                ip_address = request.META.get('REMOTE_ADDR', '127.0.0.1')
+                device_info = request.META.get('HTTP_USER_AGENT', 'Unknown Device')
+                
                 # Generate tokens
                 refresh = RefreshToken.for_user(user)
                 
@@ -541,8 +813,22 @@ class PasswordResetRequestView(APIView):
                 user_agent = request.META.get('HTTP_USER_AGENT', 'Unknown Device')
                 
                 # Create context with all required information
+                # Ensure the NEXTJS_URL ends with a slash if it doesn't already
+                nextjs_url = os.environ.get('NEXTJS_URL', 'http://localhost:5173/')
+                if not nextjs_url.endswith('/'):
+                    nextjs_url += '/'
+                
+                # Construct the reset link with proper formatting
+                reset_link = f"{nextjs_url}reset-password?token={token}"
+                
+                # Debug logging - only log non-sensitive information
+                logging.info(f"Password reset token generated for user: {email}")
+                logging.info(f"NEXTJS_URL from env: {nextjs_url}")
+                logging.info(f"Reset link generated successfully")
+                
                 context = {
-                    'reset_link': f"{os.environ.get('NEXTJS_URL')}reset-password?token={token}",
+                    'reset_link': reset_link,
+                    'token': token,  # Also pass token separately for debugging
                     'user_name': user.first_name or 'there',
                     'country': location_info.get('country', 'Unknown'),
                     'city': location_info.get('city', 'Unknown'),
@@ -576,21 +862,54 @@ class PasswordResetConfirmView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        # Log the incoming request data for debugging
+        token_from_request = request.data.get('token', 'No token in request')
+        logging.debug(f"Password reset attempt with token: {token_from_request[:10]}...")
+        
         serializer = PasswordResetConfirmSerializer(data=request.data)
         if serializer.is_valid():
             token = serializer.validated_data['token']
             try:
+                # Check if any user has this token (for debugging)
+                users_with_token = CustomUser.objects.filter(password_reset_token=token)
+                if not users_with_token.exists():
+                    logging.warning(f"No users found with token starting with {token[:10]}...")
+                    # Check if there are any users with reset tokens (for debugging)
+                    users_with_any_token = CustomUser.objects.exclude(password_reset_token__isnull=True).exclude(password_reset_token='')
+                    if users_with_any_token.exists():
+                        logging.debug(f"There are {users_with_any_token.count()} users with reset tokens")
+                    
                 user = CustomUser.objects.get(password_reset_token=token)
+                
+                # Reset the password
                 user.set_password(serializer.validated_data['new_password'])
                 user.password_reset_token = None  # Invalidate token
+                
+                # If account was locked due to failed attempts, unlock it
+                # Clear both account-based and IP-based lockouts
+                account_cache_key = f"login_attempts:{user.email}"
+                cache.delete(account_cache_key)  # Clear the account-based failed attempts counter
+                
+                # Also clear any IP-based rate limiting that might be associated with this account
+                # Since we don't know which IP was used, we'll add a special flag to indicate this account
+                # has been verified through password reset
+                verified_key = f"verified_reset:{user.email}"
+                cache.set(verified_key, True, 86400)  # Set for 24 hours
+                
+                logging.info(f"Account lockout cleared for {user.email} after password reset")
+                
                 user.save()
-                return Response({'message': 'Password reset successful! 🎉'})
+                logging.info(f"Password reset successful for user: {user.email}")
+                return Response({'message': 'Password reset successful! 🎉 You can now log in with your new password.'})
             except CustomUser.DoesNotExist:
+                logging.warning(f"Password reset failed: No user found with token starting with {token[:10]}...")
                 return Response(
-                    {'error': 'Invalid or expired reset token! 🚫'}, 
+                    {'error': 'Invalid or expired reset token! 🚫 Please request a new password reset link.'}, 
                     status=400
                 )
-        return Response(serializer.errors, status=400)     
+        else:
+            logging.warning(f"Password reset validation failed: {serializer.errors}")
+            return Response(serializer.errors, status=400)     
 
 class UpdateOnboardingStatusView(APIView):
     permission_classes = [IsAuthenticated]

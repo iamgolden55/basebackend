@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Alert - PHB</title>
+    <style type="text/css">
+        /* Base styles */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333333;
+            margin: 0;
+            padding: 0;
+            background-color: #f9f9f9;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #ffffff;
+            border: 1px solid #e8e8e8;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+        .header {
+            background-color: #004a7c;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-top-left-radius: 5px;
+            border-top-right-radius: 5px;
+            margin-top: -20px;
+            margin-left: -20px;
+            margin-right: -20px;
+        }
+        .logo {
+            font-size: 36px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .hospital-name {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+        .alert-badge {
+            display: inline-block;
+            background-color: #d9534f;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 3px;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+        .alert-time {
+            margin-top: 20px;
+            color: #666;
+            font-size: 0.9em;
+            border-top: 1px solid #eee;
+            padding-top: 15px;
+        }
+        .content {
+            padding: 20px 0;
+        }
+        .alert-info {
+            background-color: #f8f9fa;
+            border-left: 4px solid #d9534f;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .info-row {
+            margin-bottom: 10px;
+            display: flex;
+        }
+        .info-label {
+            font-weight: bold;
+            width: 150px;
+        }
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eeeeee;
+            text-align: center;
+            font-size: 0.9em;
+            color: #666666;
+        }
+        .button {
+            display: inline-block;
+            background-color: #004a7c;
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            margin-top: 15px;
+            font-weight: bold;
+        }
+        .helper-text {
+            margin-top: 20px;
+            font-size: 0.9em;
+            color: #666;
+        }
+        .security-tips {
+            margin-top: 20px;
+            background-color: #f0f8ff;
+            border-left: 4px solid #007bff;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        ul {
+            margin-bottom: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">PHB</div>
+            <div class="hospital-name">{{ hospital_name }}</div>
+            <div class="alert-badge">SECURITY ALERT</div>
+        </div>
+        
+        <div class="content">
+            <h2>⚠️ Security Alert: Suspicious Login Activity</h2>
+            
+            <p>We have detected suspicious login activity on your hospital administrator account. To protect your account, we're sending this alert with the details.</p>
+            
+            <div class="alert-info">
+                <div class="info-row">
+                    <div class="info-label">Hospital:</div>
+                    <div>{{ hospital_name }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Admin Username:</div>
+                    <div>{{ admin_email }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">IP Address:</div>
+                    <div>{{ ip_address }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Location:</div>
+                    <div>{{ location }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Failed Attempts:</div>
+                    <div>{{ attempts }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Time:</div>
+                    <div>{{ timestamp }}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Status:</div>
+                    <div><strong>{{ status }}</strong></div>
+                </div>
+            </div>
+            
+            <p><strong>What this means:</strong> Someone has made multiple unsuccessful attempts to access your hospital admin account. The account will now be temporarily locked for {{ lockout_duration }} minutes to protect your security.</p>
+            
+            <p><a href="{{ reset_password_url }}" class="button">Reset Your Password</a></p>
+            
+            <div class="security-tips">
+                <h4 style="margin-top: 0;">Security Recommendations:</h4>
+                <ul>
+                    <li>Reset your password immediately if you don't recognize this activity</li>
+                    <li>Use a strong, unique password with a mix of letters, numbers, and symbols</li>
+                    <li>Ensure your contact information is up to date</li>
+                    <li>Contact PHB support if you need assistance securing your account</li>
+                </ul>
+            </div>
+            
+            <p class="helper-text">If you recognize this activity or have questions, please contact our security team immediately at <a href="mailto:security@publichealthbureau.com">security@publichealthbureau.com</a>.</p>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated security alert from Public Health Bureau.</p>
+            <p>© {{ current_year }} Public Health Bureau. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
