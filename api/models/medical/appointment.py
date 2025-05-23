@@ -62,7 +62,9 @@ class Appointment(TimestampedModel):
     doctor = models.ForeignKey(
         'api.Doctor',
         on_delete=models.PROTECT,
-        related_name='appointments'
+        related_name='appointments',
+        null=True,
+        blank=True
     )
 
     # Appointment Details
@@ -97,6 +99,10 @@ class Appointment(TimestampedModel):
     symptoms = models.TextField(
         blank=True,
         help_text="Description of symptoms"
+    )
+    symptoms_data = models.JSONField(
+        default=list,
+        help_text="Structured symptoms data"
     )
     medical_history = models.TextField(
         blank=True,
@@ -241,14 +247,13 @@ class Appointment(TimestampedModel):
                     'appointment_date': ["You already have an appointment in this specialty on this date. Please choose another date or specialty."]
                 })
             
-        if not is_emergency:
-            # Check if doctor is available
+        # Only check doctor availability if a doctor is assigned and it's not an emergency
+        if self.doctor and not is_emergency:
             if not self.doctor.is_available_at(self.appointment_date, is_emergency=False, current_appointment=self):
                 raise ValidationError({
                     'appointment_date': ["Doctor is not available at this time"]
                 })
                 
-            # Check if doctor can accept more appointments
             if not self.doctor.can_accept_appointment(self.appointment_date.date()):
                 raise ValidationError({
                     'appointment_date': ["Doctor's schedule is full for this date"]
@@ -309,15 +314,13 @@ class Appointment(TimestampedModel):
         
         super().save(*args, **kwargs)
         
-        # Create booking confirmation notifications if it's a new appointment
+        # Handle notifications based on appointment status
         if self.pk is None:
-            # Import here to avoid circular imports
+            # New appointment - send booking confirmation
             from api.utils.email import send_appointment_confirmation_email
-            
-            # Send email confirmation
             send_appointment_confirmation_email(self)
             
-            # Create Email Notification
+            # Create notifications for new booking
             AppointmentNotification.objects.create(
                 appointment=self,
                 notification_type='email',
@@ -330,26 +333,39 @@ class Appointment(TimestampedModel):
                     f"at {self.hospital.name} ({self.department.name}) on "
                     f"{self.appointment_date.strftime('%Y-%m-%d %H:%M')} has been booked.\n\n"
                     f"Appointment ID: {self.appointment_id}\n"
+                    f"Status: Pending doctor's confirmation\n"
                 ),
-                # Optionally specify a template name if using email templates
-                # template_name='appointment_booking_confirmation' 
+                template_name='appointment_booking_confirmation'
             )
             
-            # Create SMS Notification (adjust message for SMS length constraints)
-            AppointmentNotification.objects.create(
-                appointment=self,
-                notification_type='sms',
-                event_type='booking_confirmation',
-                recipient=self.patient,
-                subject=f"Appt Confirmed: {self.appointment_id}", # Shorter subject for SMS?
-                message=(
-                    f"Appt Confirmed: Dr. {self.doctor.user.last_name}, "
-                    f"{self.appointment_date.strftime('%b %d, %H:%M')}. "
-                    f"ID: {self.appointment_id}. "
-                    f"Hospital: {self.hospital.name[:10]}"
+            if self.patient.phone:
+                AppointmentNotification.objects.create(
+                    appointment=self,
+                    notification_type='sms',
+                    event_type='booking_confirmation',
+                    recipient=self.patient,
+                    subject=f"Appt Booked: {self.appointment_id}",
+                    message=(
+                        f"Appt Booked: Dr. {self.doctor.user.last_name}, "
+                        f"{self.appointment_date.strftime('%b %d, %H:%M')}. "
+                        f"ID: {self.appointment_id}. "
+                        f"Status: Pending"
+                    )
                 )
-                # template_name='sms_booking_confirmation' # Optional template
-            )
+        
+        elif old_status and self.status != old_status:
+            # Status has changed - send status update notification
+            from api.utils.email import send_appointment_status_update_email
+            send_appointment_status_update_email(self)
+            
+            # Create status update notification
+            AppointmentNotification.create_status_update_notification(self)
+            
+            # Special handling for confirmed appointments
+            if self.status == 'confirmed':
+                from api.utils.email import send_appointment_confirmation_email
+                send_appointment_confirmation_email(self)
+                self.create_reminders()  # Create reminder notifications
 
     @staticmethod
     def generate_appointment_id():
@@ -360,56 +376,119 @@ class Appointment(TimestampedModel):
     def _is_valid_status_transition(self, old_status, new_status):
         """Check if status transition is valid"""
         valid_transitions = {
-            'pending': ['confirmed', 'cancelled', 'rejected', 'referred'],
-            'confirmed': ['in_progress', 'cancelled', 'no_show', 'referred'],
-            'in_progress': ['completed', 'referred'],
-            'completed': [],  # No further transitions allowed
-            'cancelled': [],  # No further transitions allowed
-            'no_show': [],    # No further transitions allowed
-            'rejected': [],   # No further transitions allowed
-            'referred': ['pending'],  # Can start new appointment process
-            'rescheduled': ['pending']
+            'pending': ['confirmed', 'cancelled'],  # Initial state - can be confirmed or cancelled
+            'confirmed': ['in_progress', 'cancelled', 'pending'],  # Can go back to pending if doctor cancels
+            'in_progress': ['completed', 'pending'],  # Can go back to pending if doctor can't complete
+            'completed': [],  # Final state - no further transitions
+            'cancelled': []  # Final state - no further transitions
         }
         return new_status in valid_transitions.get(old_status, [])
 
-    def approve(self, approver, notes=None):
-        """Approve the appointment"""
-        if not approver.has_perm('api.can_approve_appointments'):
-            raise ValidationError("User does not have permission to approve appointments")
-            
+    def approve(self, doctor, notes=None):
+        """Doctor accepts the appointment"""
         if self.status != 'pending':
-            raise ValidationError("Only pending appointments can be approved")
+            raise ValidationError("Only pending appointments can be accepted")
             
+        # Check if doctor is a User with doctor_profile or a Doctor instance
+        if hasattr(doctor, 'doctor_profile'):
+            # doctor is a User with a doctor_profile
+            self.approved_by = doctor
+            doctor = doctor.doctor_profile
+        else:
+            # doctor is already a Doctor instance
+            self.approved_by = doctor.user
+        
         self.status = 'confirmed'
-        self.approved_by = approver
+        self.doctor = doctor
         self.approval_date = timezone.now()
+        
+        # Handle optional notes for backward compatibility
         if notes:
             self.approval_notes = notes
+        
         self.save()
         
-        # Import here to avoid circular imports
-        from api.utils.email import send_appointment_confirmation_email
-        
-        # Send confirmation email when appointment is approved
-        send_appointment_confirmation_email(self)
-        
         # Create notification for approval
-        from api.models.medical.appointment_notification import AppointmentNotification
-        
         AppointmentNotification.objects.create(
             appointment=self,
             notification_type='email',
-            event_type='appointment_approved',
+            event_type='appointment_accepted',
             recipient=self.patient,
-            subject=f"Appointment Approved - {self.appointment_id}",
+            subject=f"Appointment Accepted - {self.appointment_id}",
             message=(
                 f"Dear {self.patient.get_full_name()},\n\n"
-                f"Your appointment with Dr. {self.doctor.user.get_full_name()} "
+                f"Your appointment has been accepted by Dr. {doctor.user.get_full_name()} "
                 f"at {self.hospital.name} ({self.department.name}) on "
-                f"{self.appointment_date.strftime('%Y-%m-%d %H:%M')} has been approved.\n\n"
+                f"{self.appointment_date.strftime('%Y-%m-%d %H:%M')}.\n\n"
                 f"Appointment ID: {self.appointment_id}\n"
             ),
             template_name='appointment_confirmation'
+        )
+
+    def start_consultation(self, doctor):
+        """Start the consultation - move to in_progress"""
+        if self.status != 'confirmed':
+            raise ValidationError("Only confirmed appointments can be started")
+            
+        if self.doctor != doctor:
+            raise ValidationError("Only the assigned doctor can start the consultation")
+            
+        self.status = 'in_progress'
+        self.save()
+
+    def complete_consultation(self, doctor):
+        """Complete the consultation"""
+        if self.status != 'in_progress':
+            raise ValidationError("Only in-progress appointments can be completed")
+            
+        if self.doctor != doctor:
+            raise ValidationError("Only the assigned doctor can complete the consultation")
+            
+        self.status = 'completed'
+        self.completed_at = timezone.now()
+        self.save()
+
+    def cancel(self, cancelled_by, reason=None):
+        """Cancel the appointment with differentiation between patient and doctor cancellation"""
+        if self.status not in ['pending', 'confirmed']:
+            raise ValidationError("Only pending or confirmed appointments can be cancelled")
+            
+        is_doctor = hasattr(cancelled_by, 'doctor_profile')
+        
+        if is_doctor:
+            # Doctor cancellation - return to pending state
+            self.status = 'pending'
+            self.doctor = None  # Remove doctor assignment
+            self.notes += f"\nCancelled by Dr. {cancelled_by.get_full_name()}. Reason: {reason}"
+        else:
+            # Patient cancellation
+            self.status = 'cancelled'
+            self.cancelled_at = timezone.now()
+            self.cancellation_reason = reason
+            
+        self.save()
+        
+        # Send appropriate notification
+        event_type = 'doctor_cancelled' if is_doctor else 'patient_cancelled'
+        message = (
+            f"Dear {self.patient.get_full_name()},\n\n"
+            f"Your appointment ({self.appointment_id}) has been "
+            f"{'returned to pending status' if is_doctor else 'cancelled'}.\n"
+        )
+        if reason:
+            message += f"Reason: {reason}\n"
+            
+        if is_doctor:
+            message += "\nAnother doctor from the department will be assigned to your appointment."
+            
+        AppointmentNotification.objects.create(
+            appointment=self,
+            notification_type='email',
+            event_type=event_type,
+            recipient=self.patient,
+            subject=f"Appointment {'Status Update' if is_doctor else 'Cancellation'} - {self.appointment_id}",
+            message=message,
+            template_name='appointment_status_update'
         )
 
     def refer(self, target_hospital, reason, referred_by):
@@ -476,16 +555,6 @@ class Appointment(TimestampedModel):
         )
         
         return new_appointment
-
-    def cancel(self, reason=None):
-        """Cancel the appointment"""
-        if self.status not in ['pending', 'confirmed']:
-            raise ValidationError("Only pending or confirmed appointments can be cancelled")
-            
-        self.status = 'cancelled'
-        self.cancelled_at = timezone.now()
-        self.cancellation_reason = reason
-        self.save()  # This will trigger cancellation notification through save method
 
     def reschedule(self, new_date):
         """Reschedule the appointment"""
@@ -570,7 +639,7 @@ class Appointment(TimestampedModel):
         return {
             'appointment_id': self.appointment_id,
             'patient': self.patient.get_full_name(),
-            'doctor': f"Dr. {self.doctor.user.get_full_name()}",
+            'doctor': f"Dr. {self.doctor.user.get_full_name()}" if self.doctor else "No Doctor Assigned",
             'department': self.department.name,
             'hospital': self.hospital.name,
             'date': self.appointment_date,

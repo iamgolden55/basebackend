@@ -272,20 +272,67 @@ class ClinicalNote(TimestampedModel):
         # Save the note
         super().save(*args, **kwargs)
         
-        # Send notification to patient if this is a new note and not a draft
-        if is_new and self.status != 'draft' and hasattr(self.medical_record, 'patient') and self.medical_record.patient:
-            # Create in-app notification for the patient
-            from api.models.notifications.in_app_notification import InAppNotification
-            
-            note_type_display = self.get_note_type_display()
-            
-            InAppNotification.create_notification(
-                user=self.medical_record.patient,
-                title=f"New {note_type_display} Added",
-                message=f"A new {note_type_display.lower()} has been added to your medical records.",
-                notification_type="medical_record",
-                reference_id=f"NOTE-{self.id}"
-            )
+        # Send notification if this is a new note and not a draft
+        if is_new and self.status != 'draft' and hasattr(self.medical_record, 'user') and self.medical_record.user:
+            try:
+                from api.models.notifications.notification import Notification
+                
+                # Create notification for the patient
+                Notification.objects.create(
+                    notification_type='in_app',
+                    title='New Clinical Note Added',
+                    message=f'A new clinical note has been added to your medical record by {self.author.get_full_name()}.',
+                    user=self.medical_record.user,
+                    related_object_type='clinical_note',
+                    related_object_id=self.id
+                )
+            except Exception as e:
+                # Log error but don't prevent note creation
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to send clinical note notification: {e}")
+                
+        # Send notification if note is being shared
+        if self.status == 'shared' and hasattr(self.medical_record, 'user') and self.medical_record.user:
+            try:
+                from api.models.notifications.notification import Notification
+                
+                # Create notification for the patient
+                Notification.objects.create(
+                    notification_type='in_app',
+                    title='Clinical Note Shared With You',
+                    message=f'A clinical note has been shared with you by {self.author.get_full_name()}.',
+                    user=self.medical_record.user,
+                    related_object_type='clinical_note',
+                    related_object_id=self.id
+                )
+            except Exception as e:
+                # Log error but don't prevent note update
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to send clinical note sharing notification: {e}")
+                
+        # Send notification if note is being finalized
+        if self.status == 'finalized' and hasattr(self.medical_record, 'user') and self.medical_record.user:
+            try:
+                from api.models.notifications.notification import Notification
+                
+                # Create notification for the patient
+                Notification.objects.create(
+                    notification_type='in_app',
+                    title='Clinical Note Finalized',
+                    message=f'A clinical note about your visit has been finalized by {self.author.get_full_name()}.',
+                    user=self.medical_record.user,
+                    related_object_type='clinical_note',
+                    related_object_id=self.id
+                )
+            except Exception as e:
+                # Log error but don't prevent note update
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to send clinical note finalization notification: {e}")
+        
+        return super().save(*args, **kwargs)
     
     def sign(self, user, cosigner=None):
         """
@@ -313,13 +360,13 @@ class ClinicalNote(TimestampedModel):
         self.save()
         
         # Send notification to patient when note is signed and finalized
-        if hasattr(self.medical_record, 'patient') and self.medical_record.patient:
+        if hasattr(self.medical_record, 'user') and self.medical_record.user:
             from api.models.notifications.in_app_notification import InAppNotification
             
             note_type_display = self.get_note_type_display()
             
             InAppNotification.create_notification(
-                user=self.medical_record.patient,
+                user=self.medical_record.user,
                 title=f"{note_type_display} Finalized",
                 message=f"Your {note_type_display.lower()} has been finalized and is ready for review.",
                 notification_type="medical_record",
@@ -363,13 +410,13 @@ class ClinicalNote(TimestampedModel):
         )
         
         # Notify patient about amended note
-        if hasattr(self.medical_record, 'patient') and self.medical_record.patient:
+        if hasattr(self.medical_record, 'user') and self.medical_record.user:
             from api.models.notifications.in_app_notification import InAppNotification
             
             note_type_display = self.get_note_type_display()
             
             InAppNotification.create_notification(
-                user=self.medical_record.patient,
+                user=self.medical_record.user,
                 title=f"{note_type_display} Updated",
                 message=f"Your {note_type_display.lower()} has been updated with new information.",
                 notification_type="medical_record",

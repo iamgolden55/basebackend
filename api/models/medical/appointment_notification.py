@@ -3,6 +3,7 @@ from django.utils import timezone
 from django.core.mail import send_mail
 from django.conf import settings
 from django.template.loader import render_to_string
+from django.utils.html import strip_tags
 from ..base import TimestampedModel
 
 class AppointmentNotification(TimestampedModel):
@@ -230,14 +231,23 @@ class AppointmentNotification(TimestampedModel):
         context = self._get_template_context()
         
         if self.template_name:
-            html_message = render_to_string(
-                f'notifications/email/{self.template_name}.html',
-                context
-            )
-            text_message = render_to_string(
-                f'notifications/email/{self.template_name}.txt',
-                context
-            )
+            try:
+                # Try with notifications/email path first
+                html_message = render_to_string(
+                    f'notifications/email/{self.template_name}.html',
+                    context
+                )
+                text_message = render_to_string(
+                    f'notifications/email/{self.template_name}.txt',
+                    context
+                )
+            except:
+                # If template not found, try with email path
+                html_message = render_to_string(
+                    f'email/{self.template_name}.html',
+                    context
+                )
+                text_message = strip_tags(html_message)
         else:
             html_message = self.message
             text_message = self.message
@@ -299,20 +309,28 @@ class AppointmentNotification(TimestampedModel):
         )
 
     def _get_template_context(self):
-        """Get context for notification templates"""
-        appointment = self.appointment
-        return {
-            'appointment_id': appointment.appointment_id,
-            'patient_name': appointment.patient.get_full_name(),
-            'doctor_name': f"Dr. {appointment.doctor.user.get_full_name()}",
-            'hospital_name': appointment.hospital.name,
-            'department_name': appointment.department.name,
-            'appointment_date': appointment.appointment_date,
-            'appointment_type': appointment.get_appointment_type_display(),
-            'status': appointment.get_status_display(),
-            'payment_status': appointment.get_payment_status_display(),
-            'is_insurance_based': appointment.is_insurance_based,
+        """Get context data for templates"""
+        context = {
+            'patient_name': self.recipient.get_full_name(),
+            'appointment_id': self.appointment.appointment_id,
+            'doctor_name': f"Dr. {self.appointment.doctor.user.get_full_name()}" if self.appointment.doctor else "TBD",
+            'hospital_name': self.appointment.hospital.name,
+            'department_name': self.appointment.department.name,
+            'appointment_date': self.appointment.appointment_date,
+            'appointment_date_formatted': self.appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p'),
+            'appointment_date_only': self.appointment.appointment_date.strftime('%d %B, %Y'),
+            'appointment_time_only': self.appointment.appointment_date.strftime('%I:%M %p'),
+            'frontend_url': settings.FRONTEND_URL if hasattr(settings, 'FRONTEND_URL') else '',
+            'subject': self.subject,
+            'message': self.message,
         }
+        
+        # Status-specific context
+        status_dict = dict(self.appointment._meta.get_field('status').choices)
+        context['status'] = self.appointment.status
+        context['status_display'] = status_dict.get(self.appointment.status, self.appointment.status)
+        
+        return context
 
     @classmethod
     def create_booking_confirmation(cls, appointment):

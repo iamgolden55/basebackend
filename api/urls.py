@@ -44,6 +44,16 @@ from api.views.hospital.hospital_views import (
     pending_hospital_registrations,
     doctor_appointments,
     AppointmentViewSet,
+    department_pending_appointments,
+    accept_appointment,
+    start_consultation,
+    complete_consultation,
+    add_doctor_notes,
+    cancel_appointment,
+    mark_appointment_no_show,
+    create_prescription,
+    patient_prescriptions,
+    appointment_prescriptions
 )
 
 # Medical views
@@ -180,9 +190,35 @@ urlpatterns = [
     path('doctor-appointments/<str:appointment_id>/status/', 
          lambda request, appointment_id: RedirectView.as_view(
              url='/api/appointments/{}/status/'.format(appointment_id), 
-             permanent=True
+             permanent=False
          )(request), 
          name='doctor-appointments-status'),
+
+    # New endpoint for doctor-appointments complete-consultation redirect
+    path('doctor-appointments/<str:appointment_id>/complete-consultation/', 
+         lambda request, appointment_id: RedirectView.as_view(
+             url='/api/appointments/{}/complete-consultation/'.format(appointment_id), 
+             permanent=False
+         )(request), 
+         name='doctor-appointments-complete-consultation'),
+
+     # New endpoint for doctor profile
+     
+
+    # New endpoints for department pending appointments workflow
+    path('department-pending-appointments/', department_pending_appointments, name='department-pending-appointments'),
+    path('appointments/<str:appointment_id>/accept/', accept_appointment, name='accept-appointment'),
+    path('appointments/<str:appointment_id>/start-consultation/', start_consultation, name='start-consultation'),
+    path('appointments/<str:appointment_id>/complete-consultation/', complete_consultation, name='complete-consultation'),
+    path('appointments/<str:appointment_id>/add-notes/', add_doctor_notes, name='add-doctor-notes'),
+    path('appointments/<str:appointment_id>/cancel/', cancel_appointment, name='cancel-appointment'),
+    path('appointments/<str:appointment_id>/no-show/', mark_appointment_no_show, name='mark-appointment-no-show'),
+    
+    # Prescription endpoints
+    path('appointments/<str:appointment_id>/prescriptions/', create_prescription, name='create-prescription'),
+    path('appointments/<str:appointment_id>/prescriptions/view/', appointment_prescriptions, name='appointment-prescriptions'),
+    path('prescriptions/', patient_prescriptions, name='patient-prescriptions'),
+    path('prescriptions/<str:appointment_id>/', patient_prescriptions, name='patient-prescriptions-by-appointment'),
 ]
 
 # Available endpoints:
@@ -203,3 +239,9 @@ urlpatterns = [
 # POST /api/appointments/<id>/complete/ - Mark an appointment as completed
 # GET /api/appointments/upcoming/ - Get upcoming appointments
 # GET /api/appointments/today/ - Get today's appointments
+
+# Prescription endpoints:
+# POST /api/appointments/<id>/prescriptions/ - Create prescriptions for a specific appointment
+# POST /api/prescriptions/ - Create prescriptions with appointment_id in the request body
+# GET /api/appointments/<id>/prescriptions/view/ - View prescriptions for a specific appointment
+# GET /api/prescriptions/view/ - View all prescriptions for the current user
