@@ -354,6 +354,16 @@ class Medication(TimestampedModel):
         help_text="Provider who prescribed the medication"
     )
     
+    # Appointment Information
+    appointment = models.ForeignKey(
+        'api.Appointment',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='medications',
+        help_text="Appointment during which this medication was prescribed"
+    )
+    
     pharmacy_name = models.CharField(
         max_length=255,
         blank=True,

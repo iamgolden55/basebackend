@@ -3,19 +3,23 @@ import logging
 import traceback
 from datetime import datetime, timedelta
 
-from django.shortcuts import get_object_or_404
-from django.http import Http404
+from django.shortcuts import get_object_or_404, render
+from django.http import Http404, HttpResponse
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Q, F, Count
 from django_filters.rest_framework import DjangoFilterBackend
 from django.conf import settings
+from django.views.decorators.http import require_POST
+from django.views.decorators.cache import never_cache
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.views.generic.base import RedirectView
 
 from rest_framework import generics, status, viewsets, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework.decorators import api_view, permission_classes, action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied
 
 from api.models import (
     Hospital, HospitalRegistration, CustomUser, Appointment, Doctor
@@ -23,12 +27,15 @@ from api.models import (
 from api.models.medical.appointment_notification import AppointmentNotification
 from api.models.medical.department import Department
 from api.models.medical.appointment import AppointmentType
+from api.models.medical.medication import Medication, MedicationCatalog
+from api.models.medical.medical_record import MedicalRecord
 from api.serializers import (
     HospitalRegistrationSerializer, HospitalSerializer, HospitalLocationSerializer,
     NearbyHospitalSerializer, AppointmentSerializer, AppointmentListSerializer,
     HospitalAdminRegistrationSerializer, ExistingUserToAdminSerializer,
     AppointmentCancelSerializer, AppointmentRescheduleSerializer,
-    AppointmentApproveSerializer, AppointmentReferSerializer
+    AppointmentApproveSerializer, AppointmentReferSerializer,
+    MedicationSerializer, PrescriptionSerializer
 )
 from api.utils.location_utils import get_location_from_ip
 
@@ -237,9 +244,10 @@ class AppointmentViewSet(viewsets.ModelViewSet):
             # Check permissions - user must be either the patient, the doctor, or admin
             is_patient = appointment.patient == user
             is_doctor = hasattr(user, 'doctor_profile') and appointment.doctor == user.doctor_profile
+            is_department = hasattr(user, 'doctor_profile') and appointment.department == user.doctor_profile.department
             is_hospital_admin = hasattr(user, 'hospital_admin') and appointment.hospital == user.hospital_admin.hospital
             
-            if not (is_patient or is_doctor or is_hospital_admin):
+            if not (is_patient or is_doctor or is_hospital_admin or is_department):
                 self.permission_denied(
                     self.request,
                     message="You don't have permission to access this appointment"
@@ -524,60 +532,76 @@ class AppointmentViewSet(viewsets.ModelViewSet):
         # Validate appointment date is not in the past
         appointment_date = serializer.validated_data.get('appointment_date')
         if appointment_date and appointment_date < timezone.now():
-            raise ValidationError("Cannot create appointments in the past.")
+            raise DjangoValidationError("Cannot create appointments in the past.")
         
-        # No fee handling needed anymore - removing all fee-related code
+        # Create appointment without a doctor
+        appointment = serializer.save(
+            patient=self.request.user,
+            status='pending',
+            doctor=None  # Explicitly set doctor to None
+        )
         
-        hospital = serializer.validated_data.get('hospital')
-        department = serializer.validated_data.get('department')
-        
-        # Check if doctor_id is provided
-        doctor = serializer.validated_data.get('doctor')
-        
-        # If no doctor provided or doctor is not available, find an available doctor
-        if not doctor or not self._is_doctor_available(doctor, appointment_date):
-            if doctor:
-                print(f"Doctor {doctor.id} is not available at {appointment_date}")
-            else:
-                print(f"No doctor specified, finding available doctor")
-            
-            # Find available doctors from the user's hospital
-            try:
-                from django.db.models import Q
-                available_doctors = Doctor.objects.filter(
-                    Q(department=department),
-                    Q(hospital=hospital),
-                    Q(is_active=True),
-                    Q(available_for_appointments=True)
-                )
-                
-                print(f"Found {available_doctors.count()} potential doctors in department {department.id} at hospital {hospital.id}")
-                
-                # Try to find an available doctor
-                doctor_found = False
-                for doc in available_doctors:
-                    if self._is_doctor_available(doc, appointment_date):
-                        doctor = doc
-                        serializer.validated_data['doctor'] = doctor
-                        print(f"Found available doctor: {doctor.id}")
-                        doctor_found = True
-                        break
-                
-                if not doctor_found:
-                    print("No available doctors found at the specified time")
-                    raise ValidationError("No doctors available at the requested time. Please choose a different time or department.")
-            except Exception as e:
-                print(f"Error finding available doctor: {str(e)}")
-                raise ValidationError(f"Error finding available doctor: {str(e)}")
-        
-        # Save the appointment - no need to set fee-related fields
-        appointment = serializer.save(patient=self.request.user)
-        
-        # Send confirmation (with error handling)
         try:
-            self._send_appointment_confirmation(appointment)
+            # Create notification for the patient
+            AppointmentNotification.objects.create(
+                appointment=appointment,
+                notification_type='email',
+                event_type='booking_confirmation',
+                recipient=appointment.patient,
+                subject=f"Appointment Booking Confirmation - {appointment.appointment_id}",
+                message=(
+                    f"Dear {appointment.patient.get_full_name()},\n\n"
+                    f"Your appointment at {appointment.hospital.name} ({appointment.department.name}) "
+                    f"on {appointment.appointment_date.strftime('%Y-%m-%d %H:%M')} has been booked.\n\n"
+                    f"Appointment ID: {appointment.appointment_id}\n"
+                    f"Status: Pending doctor's acceptance\n"
+                ),
+                template_name='appointment_booking_confirmation'
+            )
+            
+            if appointment.patient.phone:
+                AppointmentNotification.objects.create(
+                    appointment=appointment,
+                    notification_type='sms',
+                    event_type='booking_confirmation',
+                    recipient=appointment.patient,
+                    subject=f"Appt Booked: {appointment.appointment_id}",
+                    message=(
+                        f"Appt Booked at {appointment.hospital.name}, "
+                        f"{appointment.appointment_date.strftime('%b %d, %H:%M')}. "
+                        f"ID: {appointment.appointment_id}. "
+                        f"Status: Pending"
+                    )
+                )
+            
+            # Create notification for all doctors in the department
+            doctors = Doctor.objects.filter(
+                department=appointment.department,
+                hospital=appointment.hospital,
+                is_active=True
+            )
+            
+            for doctor in doctors:
+                AppointmentNotification.objects.create(
+                    appointment=appointment,
+                    notification_type='email',
+                    event_type='new_appointment_available',
+                    recipient=doctor.user,
+                    subject=f"New Appointment Available - {appointment.appointment_id}",
+                    message=(
+                        f"Dear Dr. {doctor.user.get_full_name()},\n\n"
+                        f"A new appointment is available in your department:\n"
+                        f"Date: {appointment.appointment_date.strftime('%Y-%m-%d %H:%M')}\n"
+                        f"Department: {appointment.department.name}\n"
+                        f"Patient: {appointment.patient.get_full_name()}\n"
+                        f"Chief Complaint: {appointment.chief_complaint}\n\n"
+                        f"Please review and accept if you are available."
+                    ),
+                    template_name='new_appointment_notification'
+                )
+            
         except Exception as e:
-            logger.error(f"Failed to send appointment confirmation: {e}")
+            logger.error(f"Failed to send appointment notifications: {e}")
             # Don't raise the error - appointment creation should succeed even if notification fails
         
         return appointment
@@ -1386,6 +1410,1190 @@ def doctor_appointments(request):
     except Exception as e:
         import traceback
         error_msg = f"Error getting doctor appointments: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def department_pending_appointments(request):
+    """
+    Returns appointments in the doctor's department:
+    - Pending appointments that need a doctor to accept them
+    - Appointments assigned to the current doctor with various statuses
+    
+    This allows doctors to see both appointments they could potentially accept
+    and track their own appointments in different states.
+    
+    Optional query parameters:
+    - status: Filter by appointment status ('all', 'pending', 'confirmed', etc.)
+    - doctor_id: For admins, view appointments for a specific doctor
+    - start_date: Filter by start date (YYYY-MM-DD)
+    - end_date: Filter by end date (YYYY-MM-DD)
+    - priority: Filter by priority level
+    """
+    user = request.user
+    
+    try:
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered as a doctor in the system'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        doctor = user.doctor_profile
+        
+        # Check if specific doctor_id is requested (for admin users)
+        requested_doctor_id = request.query_params.get('doctor_id')
+        is_admin = user.is_staff or user.is_superuser or user.role == 'hospital_admin'
+        
+        # If doctor_id is provided and user is admin, use that doctor instead
+        if requested_doctor_id and is_admin:
+            try:
+                doctor = Doctor.objects.get(id=requested_doctor_id)
+                if doctor.hospital != user.doctor_profile.hospital:
+                    return Response({
+                        'status': 'error',
+                        'message': 'You can only view appointments for doctors in your hospital'
+                    }, status=status.HTTP_403_FORBIDDEN)
+            except Doctor.DoesNotExist:
+                return Response({
+                    'status': 'error',
+                    'message': f'Doctor with ID {requested_doctor_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Get status filter if provided, otherwise default to 'all'
+        status_filter = request.query_params.get('status', 'all')
+        
+        # Initialize results dictionary
+        result = {
+            'pending_department_appointments': [],
+            'my_appointments': {
+                'confirmed': [],
+                'in_progress': [],
+                'completed': [],
+                'cancelled': [],
+                'no_show': [],
+                'all': []
+            },
+            'doctor_info': {
+                'id': doctor.id,
+                'name': f"{doctor.user.first_name} {doctor.user.last_name}",
+                'email': doctor.user.email,
+                'specialization': doctor.specialization,
+                'department': {
+                    'id': doctor.department.id if doctor.department else None,
+                    'name': doctor.department.name if doctor.department else None
+                },
+                'hospital': {
+                    'id': doctor.hospital.id if doctor.hospital else None,
+                    'name': doctor.hospital.name if doctor.hospital else None
+                }
+            }
+        }
+        
+        # Get all pending appointments in the doctor's department and hospital
+        # that don't have a doctor assigned yet
+        if status_filter in ['all', 'pending']:
+            pending_appointments = Appointment.objects.filter(
+                department=doctor.department,
+                hospital=doctor.hospital,
+                status='pending',
+                doctor__isnull=True  # No doctor assigned yet
+            ).select_related(
+                'hospital', 'department', 'patient'
+            ).order_by('-priority', 'appointment_date')
+            
+            # Apply date filters if provided
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            
+            try:
+                if start_date:
+                    start_date = timezone.make_aware(
+                        datetime.strptime(start_date, '%Y-%m-%d')
+                    )
+                    pending_appointments = pending_appointments.filter(appointment_date__gte=start_date)
+                
+                if end_date:
+                    end_date = timezone.make_aware(
+                        datetime.strptime(end_date, '%Y-%m-%d')
+                    ).replace(hour=23, minute=59, second=59)
+                    pending_appointments = pending_appointments.filter(appointment_date__lte=end_date)
+                    
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Invalid date format in query params: {e}")
+            
+            # Filter by priority if requested
+            priority = request.query_params.get('priority')
+            if priority:
+                pending_appointments = pending_appointments.filter(priority=priority)
+            
+            # Serialize the pending appointments
+            result['pending_department_appointments'] = AppointmentListSerializer(pending_appointments, many=True).data
+        
+        # Get doctor's own appointments with different statuses
+        doctor_appointments_query = Appointment.objects.filter(
+            doctor=doctor,
+            hospital=doctor.hospital
+        ).select_related(
+            'doctor', 'doctor__user', 'hospital', 'department', 'patient'
+        ).order_by('-appointment_date')
+        
+        # Apply date filters to doctor's appointments if provided
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        
+        try:
+            if start_date:
+                start_date = timezone.make_aware(
+                    datetime.strptime(start_date, '%Y-%m-%d')
+                )
+                doctor_appointments_query = doctor_appointments_query.filter(appointment_date__gte=start_date)
+            
+            if end_date:
+                end_date = timezone.make_aware(
+                    datetime.strptime(end_date, '%Y-%m-%d')
+                ).replace(hour=23, minute=59, second=59)
+                doctor_appointments_query = doctor_appointments_query.filter(appointment_date__lte=end_date)
+                
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid date format in query params: {e}")
+        
+        # Filter doctor's appointments by priority if requested
+        priority = request.query_params.get('priority')
+        if priority:
+            doctor_appointments_query = doctor_appointments_query.filter(priority=priority)
+        
+        # Get all doctor's appointments
+        doctor_appointments = doctor_appointments_query.all()
+        result['my_appointments']['all'] = AppointmentListSerializer(doctor_appointments, many=True).data
+        
+        # Filter doctor's appointments by specific statuses
+        # Only do this if status_filter is 'all' or specifically requested
+        if status_filter in ['all', 'confirmed']:
+            confirmed = doctor_appointments_query.filter(status='confirmed')
+            result['my_appointments']['confirmed'] = AppointmentListSerializer(confirmed, many=True).data
+        
+        if status_filter in ['all', 'in_progress']:
+            in_progress = doctor_appointments_query.filter(status='in_progress')
+            result['my_appointments']['in_progress'] = AppointmentListSerializer(in_progress, many=True).data
+        
+        if status_filter in ['all', 'completed']:
+            completed = doctor_appointments_query.filter(status='completed')
+            result['my_appointments']['completed'] = AppointmentListSerializer(completed, many=True).data
+        
+        if status_filter in ['all', 'cancelled']:
+            cancelled = doctor_appointments_query.filter(status='cancelled')
+            result['my_appointments']['cancelled'] = AppointmentListSerializer(cancelled, many=True).data
+        
+        if status_filter in ['all', 'no_show']:
+            no_show = doctor_appointments_query.filter(status='no_show')
+            result['my_appointments']['no_show'] = AppointmentListSerializer(no_show, many=True).data
+        
+        # Add summary counts
+        result['summary'] = {
+            'pending_department_count': len(result['pending_department_appointments']),
+            'my_appointments_count': {
+                'confirmed': len(result['my_appointments']['confirmed']),
+                'in_progress': len(result['my_appointments']['in_progress']),
+                'completed': len(result['my_appointments']['completed']),
+                'cancelled': len(result['my_appointments']['cancelled']),
+                'no_show': len(result['my_appointments']['no_show']),
+                'total': len(result['my_appointments']['all'])
+            }
+        }
+        
+        # Add additional fields like today's appointments count and upcoming appointments
+        today = timezone.now().date()
+        today_start = timezone.make_aware(datetime.combine(today, datetime.min.time()))
+        today_end = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+        
+        # Count today's appointments
+        today_count = doctor_appointments_query.filter(
+            appointment_date__range=(today_start, today_end)
+        ).count()
+        
+        # Count upcoming appointments (future dates with confirmed status)
+        upcoming_count = doctor_appointments_query.filter(
+            appointment_date__gt=today_end,
+            status='confirmed'
+        ).count()
+        
+        # Add to summary
+        result['summary']['today_appointments'] = today_count
+        result['summary']['upcoming_appointments'] = upcoming_count
+        
+        return Response(result)
+    
+    except Exception as e:
+        import traceback
+        error_msg = f"Error getting department appointments: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def accept_appointment(request, appointment_id):
+    """
+    Allows a doctor to accept a pending appointment.
+    This will assign the doctor to the appointment and change the status to confirmed.
+    """
+    user = request.user
+    
+    try:
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered as a doctor in the system'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        doctor = user.doctor_profile
+        
+        # Find the appointment
+        try:
+            appointment = Appointment.objects.get(appointment_id=appointment_id)
+        except Appointment.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': f'Appointment with ID {appointment_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if appointment is in the same department as the doctor
+        if appointment.department != doctor.department:
+            return Response({
+                'status': 'error',
+                'message': 'You can only accept appointments from your department'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Check if appointment is in the same hospital as the doctor
+        if appointment.hospital != doctor.hospital:
+            return Response({
+                'status': 'error',
+                'message': 'You can only accept appointments from your hospital'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Check if appointment is pending
+        if appointment.status != 'pending':
+            return Response({
+                'status': 'error',
+                'message': 'Only pending appointments can be accepted'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if doctor is available at the appointment time
+        appointment_date = appointment.appointment_date
+        day_name = appointment_date.strftime('%a')  # Get 3-letter day name
+        consultation_days = [d.strip() for d in doctor.consultation_days.split(',')]
+        
+        # Make the day check more flexible
+        day_matches = any(day.lower() in day_name.lower() for day in consultation_days) or \
+                    any(day_name.lower() in day.lower() for day in consultation_days)
+                    
+        if not day_matches and day_name not in consultation_days:
+            return Response({
+                'status': 'error',
+                'message': f'You do not consult on {day_name}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if time is within consultation hours
+        appointment_time = appointment_date.time()
+        
+        # Skip time check if consultation hours are not set
+        if doctor.consultation_hours_start is not None and doctor.consultation_hours_end is not None:
+            if not (doctor.consultation_hours_start <= appointment_time <= doctor.consultation_hours_end):
+                return Response({
+                    'status': 'error',
+                    'message': f'Appointment time {appointment_time} is outside your consultation hours'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check for overlapping appointments
+        appointment_end = appointment_date + timezone.timedelta(minutes=doctor.appointment_duration)
+        
+        overlapping = Appointment.objects.filter(
+            doctor=doctor,
+            status__in=['pending', 'confirmed', 'in_progress', 'scheduled', 'checking_in'],
+            appointment_date__date=appointment_date.date(),  # Only check appointments on the same day
+            appointment_date__gte=appointment_date - timezone.timedelta(minutes=doctor.appointment_duration),  # Start time is before or at the requested end time
+            appointment_date__lt=appointment_end  # Start time is before the end of the requested slot
+        )
+        
+        if overlapping.exists():
+            return Response({
+                'status': 'error',
+                'message': 'You have overlapping appointments at this time'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Accept the appointment
+        try:
+            appointment.approve(doctor)
+            
+            return Response({
+                'status': 'success',
+                'message': f'Successfully accepted appointment {appointment_id}',
+                'appointment': AppointmentListSerializer(appointment).data
+            })
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': f'Error accepting appointment: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    except Exception as e:
+        import traceback
+        error_msg = f"Error accepting appointment: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def start_consultation(request, appointment_id):
+    """
+    Allows a doctor to start the consultation for a confirmed appointment.
+    This will change the status from confirmed to in_progress.
+    """
+    user = request.user
+    
+    try:
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered as a doctor in the system'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        doctor = user.doctor_profile
+        
+        # Find the appointment
+        try:
+            appointment = Appointment.objects.get(appointment_id=appointment_id)
+        except Appointment.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': f'Appointment with ID {appointment_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if the doctor is assigned to this appointment
+        if appointment.doctor != doctor:
+            return Response({
+                'status': 'error',
+                'message': 'You can only start consultations for appointments assigned to you'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Start the consultation
+        try:
+            appointment.start_consultation(doctor)
+            
+            return Response({
+                'status': 'success',
+                'message': f'Successfully started consultation for appointment {appointment_id}',
+                'appointment': AppointmentListSerializer(appointment).data
+            })
+        except DjangoValidationError as e:
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': f'Error starting consultation: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    except Exception as e:
+        import traceback
+        error_msg = f"Error starting consultation: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def complete_consultation(request, appointment_id):
+    """
+    Allows a doctor to complete the consultation for an in-progress appointment.
+    This will change the status from in_progress to completed.
+    Notes should be added separately using the add_doctor_notes endpoint.
+    """
+    user = request.user
+    print("request.data", request.data)
+    try:
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered as a doctor in the system'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        doctor = user.doctor_profile
+        
+        # Find the appointment
+        try:
+            appointment = Appointment.objects.get(appointment_id=appointment_id)
+        except Appointment.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': f'Appointment with ID {appointment_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if the doctor is assigned to this appointment
+        if appointment.doctor != doctor:
+            return Response({
+                'status': 'error',
+                'message': 'You can only complete consultations for appointments assigned to you'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Handle notes if provided - notes are now handled here directly
+        notes = request.data.get('notes', '')
+        print("notes", notes)
+        if notes:
+            # Format the notes with proper timestamp and doctor attribution
+            timestamp = timezone.now().strftime('%Y-%m-%d %H:%M')
+            formatted_note = f"\n\nDoctor's Notes ({timestamp}) - Dr. {doctor.user.get_full_name()}:\n{notes}"
+            print("formatted_note", formatted_note)
+            
+            # Use direct SQL update to append notes without triggering validation
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE api_appointment SET notes = CONCAT(COALESCE(notes, ''), %s) WHERE appointment_id = %s",
+                    [formatted_note, appointment_id]
+                )
+                print("Notes added successfully as part of consultation completion")
+        
+        # Complete the consultation - change status to completed
+        try:
+            # Apply status change directly with bypass_validation
+            appointment.status = 'completed'
+            appointment.completed_at = timezone.now()
+            appointment.save(bypass_validation=True)
+            
+            # Refresh the appointment from the database to include the newly added notes
+            appointment.refresh_from_db()
+            
+            return Response({
+                'status': 'success',
+                'message': f'Successfully completed consultation for appointment {appointment_id}',
+                'appointment': AppointmentListSerializer(appointment).data
+            })
+        except DjangoValidationError as e:
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_400_BAD_REQUEST)
+    
+    except Exception as e:
+        import traceback
+        error_msg = f"Error completing consultation: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def add_doctor_notes(request, appointment_id):
+    """
+    Allows a doctor to add notes to an appointment without changing its status.
+    This is a dedicated endpoint for adding medical notes during or after a consultation.
+    """
+    user = request.user
+    print("ADD NOTES request.data:", request.data)
+    
+    try:
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered as a doctor in the system'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        doctor = user.doctor_profile
+        
+        # Find the appointment
+        try:
+            appointment = Appointment.objects.get(appointment_id=appointment_id)
+            print(f"Found appointment: {appointment.appointment_id} with status: {appointment.status}")
+        except Appointment.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': f'Appointment with ID {appointment_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if the doctor is assigned to this appointment
+        if appointment.doctor != doctor:
+            return Response({
+                'status': 'error',
+                'message': 'You can only add notes to appointments assigned to you'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Get the notes from the request
+        notes = request.data.get('notes', '')
+        if not notes:
+            return Response({
+                'status': 'error',
+                'message': 'Notes cannot be empty'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Add the notes to the appointment
+        timestamp = timezone.now().strftime('%Y-%m-%d %H:%M')
+        
+        # Prefix the note with the doctor's name and timestamp
+        formatted_note = f"\n\nDoctor's Notes ({timestamp}) - Dr. {doctor.user.get_full_name()}:\n{notes}"
+        print(f"Adding notes: {formatted_note[:50]}...")
+        
+        try:
+            # Use direct update in the database to avoid validation
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE api_appointment SET notes = CONCAT(notes, %s) WHERE appointment_id = %s",
+                    [formatted_note, appointment_id]
+                )
+                print("Notes added successfully using direct SQL update")
+                
+            # Refresh the appointment from the database
+            appointment.refresh_from_db()
+            
+            return Response({
+                'status': 'success',
+                'message': 'Notes added successfully',
+                'appointment': AppointmentListSerializer(appointment).data
+            })
+        except Exception as e:
+            import traceback
+            print(f"Error adding notes: {str(e)}\n{traceback.format_exc()}")
+            return Response({
+                'status': 'error',
+                'message': f'Error adding notes: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    except Exception as e:
+        import traceback
+        error_msg = f"Error adding doctor notes: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def cancel_appointment(request, appointment_id):
+    """
+    Allows a doctor or patient to cancel an appointment.
+    This changes the status from 'pending' or 'confirmed' to 'cancelled'.
+    """
+    user = request.user
+    print("request.data", request.data)
+    
+    try:
+        # Find the appointment
+        try:
+            appointment = Appointment.objects.get(appointment_id=appointment_id)
+        except Appointment.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': f'Appointment with ID {appointment_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check permission to cancel
+        # User must be either the patient, the assigned doctor, or hospital admin
+        is_patient = appointment.patient == user
+        is_doctor = hasattr(user, 'doctor_profile') and appointment.doctor == user.doctor_profile
+        is_hospital_admin = hasattr(user, 'hospital_admin_profile') and appointment.hospital == user.hospital_admin_profile.hospital
+        
+        if not (is_patient or is_doctor or is_hospital_admin):
+            return Response({
+                'status': 'error',
+                'message': 'You do not have permission to cancel this appointment'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Check if appointment can be cancelled
+        if appointment.status not in ['pending', 'confirmed']:
+            return Response({
+                'status': 'error',
+                'message': f'Cannot cancel appointment with status {appointment.status}. Only pending or confirmed appointments can be cancelled.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get cancellation reason
+        cancellation_reason = request.data.get('cancellation_reason', '')
+        if not cancellation_reason:
+            return Response({
+                'status': 'error',
+                'message': 'Cancellation reason is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Set the user type who cancelled
+        cancelled_by_type = 'doctor' if is_doctor else 'patient' if is_patient else 'admin'
+        
+        # Update appointment status and add cancellation info
+        try:
+            # Use direct SQL update to avoid validation issues
+            from django.db import connection
+            with connection.cursor() as cursor:
+                # Update appointment status and cancellation details
+                cursor.execute(
+                    """
+                    UPDATE api_appointment 
+                    SET status = 'cancelled', 
+                        cancellation_reason = %s, 
+                        cancelled_at = %s 
+                    WHERE appointment_id = %s
+                    """,
+                    [cancellation_reason, timezone.now(), appointment_id]
+                )
+                print(f"Appointment {appointment_id} cancelled successfully")
+            
+            # Refresh appointment from database
+            appointment.refresh_from_db()
+            
+            # Send cancellation notification to the patient
+            try:
+                # Create email notification
+                AppointmentNotification.objects.create(
+                    appointment=appointment,
+                    notification_type='email',
+                    event_type='appointment_cancelled',
+                    recipient=appointment.patient,
+                    subject=f"Appointment Cancelled - {appointment.appointment_id}",
+                    message=(
+                        f"Dear {appointment.patient.get_full_name()},\n\n"
+                        f"Your appointment ({appointment.appointment_id}) scheduled for "
+                        f"{appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p')} "
+                        f"has been cancelled by {cancelled_by_type}.\n\n"
+                        f"Reason: {cancellation_reason}\n\n"
+                        f"Please contact us if you need to reschedule or have any questions."
+                    ),
+                    template_name='appointment_cancelled'
+                )
+                
+                # Create SMS notification if patient has phone number
+                if appointment.patient.phone:
+                    AppointmentNotification.objects.create(
+                        appointment=appointment,
+                        notification_type='sms',
+                        event_type='appointment_cancelled',
+                        recipient=appointment.patient,
+                        subject=f"Appt Cancelled: {appointment.appointment_id}",
+                        message=(
+                            f"Your appointment on {appointment.appointment_date.strftime('%b %d')} "
+                            f"has been cancelled. Reason: {cancellation_reason[:50]}"
+                        )
+                    )
+                
+                # If cancelled by patient, notify the doctor (if assigned)
+                if is_patient and appointment.doctor:
+                    AppointmentNotification.objects.create(
+                        appointment=appointment,
+                        notification_type='email',
+                        event_type='appointment_cancelled',
+                        recipient=appointment.doctor.user,
+                        subject=f"Patient Cancelled Appointment - {appointment.appointment_id}",
+                        message=(
+                            f"Dear Dr. {appointment.doctor.user.get_full_name()},\n\n"
+                            f"Your appointment ({appointment.appointment_id}) with {appointment.patient.get_full_name()} "
+                            f"scheduled for {appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p')} "
+                            f"has been cancelled by the patient.\n\n"
+                            f"Reason: {cancellation_reason}"
+                        ),
+                        template_name='appointment_cancelled_doctor'
+                    )
+            except Exception as e:
+                print(f"Error sending cancellation notifications: {str(e)}")
+                # Continue even if notification fails
+            
+            return Response({
+                'status': 'success',
+                'message': f'Appointment {appointment_id} cancelled successfully',
+                'appointment': AppointmentListSerializer(appointment).data
+            })
+            
+        except Exception as e:
+            print(f"Error cancelling appointment: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': f'Error cancelling appointment: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+    except Exception as e:
+        import traceback
+        error_msg = f"Error processing cancellation: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def mark_appointment_no_show(request, appointment_id):
+    """
+    Allows a doctor to mark a patient as 'no-show' for an appointment.
+    This changes the status from 'confirmed' to 'no_show'.
+    Only doctors can mark appointments as no-show.
+    """
+    user = request.user
+    print("request.data", request.data)
+    
+    try:
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'Only doctors can mark appointments as no-show'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        doctor = user.doctor_profile
+        
+        # Find the appointment
+        try:
+            appointment = Appointment.objects.get(appointment_id=appointment_id)
+        except Appointment.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': f'Appointment with ID {appointment_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if the doctor is assigned to this appointment
+        if appointment.doctor != doctor:
+            return Response({
+                'status': 'error',
+                'message': 'You can only mark no-show for appointments assigned to you'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Check if appointment can be marked as no-show
+        if appointment.status != 'confirmed':
+            return Response({
+                'status': 'error',
+                'message': f'Cannot mark no-show for appointment with status {appointment.status}. Only confirmed appointments can be marked as no-show.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Ensure appointment date is in the past
+        if appointment.appointment_date > timezone.now():
+            return Response({
+                'status': 'error',
+                'message': 'Cannot mark no-show for future appointments'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Optional notes about no-show
+        notes = request.data.get('notes', '')
+        
+        try:
+            # Add no-show notes if provided
+            if notes:
+                timestamp = timezone.now().strftime('%Y-%m-%d %H:%M')
+                no_show_note = f"\n\nNo-Show Note ({timestamp}) - Dr. {doctor.user.get_full_name()}:\n{notes}"
+                
+                # Append notes using direct SQL
+                from django.db import connection
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE api_appointment SET notes = CONCAT(notes, %s) WHERE appointment_id = %s",
+                        [no_show_note, appointment_id]
+                    )
+            
+            # Update appointment status to no_show
+            appointment.status = 'no_show'
+            appointment.save(bypass_validation=True)
+            
+            # Send no-show notification to the patient
+            try:
+                # Create email notification
+                AppointmentNotification.objects.create(
+                    appointment=appointment,
+                    notification_type='email',
+                    event_type='appointment_no_show',
+                    recipient=appointment.patient,
+                    subject=f"Missed Appointment - {appointment.appointment_id}",
+                    message=(
+                        f"Dear {appointment.patient.get_full_name()},\n\n"
+                        f"We noticed you missed your appointment ({appointment.appointment_id}) scheduled for "
+                        f"{appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p')}.\n\n"
+                        f"Please contact us to reschedule if needed. "
+                        f"Regular attendance at scheduled appointments is important for your care.\n\n"
+                        f"If you have any questions or need assistance, please don't hesitate to reach out."
+                    ),
+                    template_name='appointment_no_show'
+                )
+                
+                # Create SMS notification if patient has phone number
+                if appointment.patient.phone:
+                    AppointmentNotification.objects.create(
+                        appointment=appointment,
+                        notification_type='sms',
+                        event_type='appointment_no_show',
+                        recipient=appointment.patient,
+                        subject=f"Missed Appt: {appointment.appointment_id}",
+                        message=(
+                            f"We noticed you missed your appointment on "
+                            f"{appointment.appointment_date.strftime('%b %d')}. "
+                            f"Please call to reschedule."
+                        )
+                    )
+            except Exception as e:
+                print(f"Error sending no-show notifications: {str(e)}")
+                # Continue even if notification fails
+                
+            return Response({
+                'status': 'success',
+                'message': f'Appointment {appointment_id} marked as no-show',
+                'appointment': AppointmentListSerializer(appointment).data
+            })
+            
+        except Exception as e:
+            print(f"Error marking appointment as no-show: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': f'Error marking appointment as no-show: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+    except Exception as e:
+        import traceback
+        error_msg = f"Error processing no-show request: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_prescription(request, appointment_id=None):
+    """
+    Create new prescriptions for a patient based on an appointment.
+    Doctors can prescribe multiple medications in a single request.
+    
+    Request body format:
+    {
+        "appointment_id": "APT-ABC123",  (optional if provided in URL)
+        "medications": [
+            {
+                "medication_name": "Amoxicillin",
+                "strength": "500 mg",
+                "form": "capsule",
+                "route": "oral",
+                "dosage": "1 capsule",
+                "frequency": "every 8 hours",
+                "start_date": "2023-05-01",  (optional, defaults to today)
+                "end_date": "2023-05-10",    (optional)
+                "duration": "10 days",       (optional)
+                "patient_instructions": "Take with food",  (optional)
+                "pharmacy_instructions": "",  (optional)
+                "indication": "Bacterial infection",  (optional)
+                "refills_authorized": 0,  (optional, defaults to 0)
+                "pharmacy_name": ""  (optional)
+            },
+            {
+                // Additional medications...
+            }
+        ]
+    }
+    """
+    user = request.user
+    
+    try:
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'You are not registered as a doctor in the system'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        doctor = user.doctor_profile
+        
+        # Get appointment_id from URL parameter or request data
+        if not appointment_id:
+            appointment_id = request.data.get('appointment_id')
+        
+        # Prepare data for validation
+        data = {
+            'appointment_id': appointment_id,
+            'medications': request.data.get('medications', [])
+        }
+        
+        # Validate the data
+        serializer = PrescriptionSerializer(data=data)
+        if not serializer.is_valid():
+            return Response({
+                'status': 'error',
+                'errors': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get the appointment
+        try:
+            appointment = Appointment.objects.get(appointment_id=appointment_id)
+        except Appointment.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': f'Appointment with ID {appointment_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if the doctor is assigned to this appointment
+        if appointment.doctor != doctor:
+            return Response({
+                'status': 'error',
+                'message': 'You can only prescribe medications for appointments assigned to you'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Get or create patient's medical record
+        medical_record, created = MedicalRecord.objects.get_or_create(
+            user=appointment.patient,
+            defaults={
+                'hpn': f"PHN-{appointment.patient.id}"
+            }
+        )
+        
+        # Create medications
+        created_medications = []
+        for med_data in serializer.validated_data['medications']:
+            # Look for matching catalog entry (optional)
+            catalog_entry = None
+            if 'generic_name' in med_data:
+                catalog_entries = MedicationCatalog.objects.filter(
+                    generic_name__iexact=med_data.get('generic_name')
+                )
+                if catalog_entries.exists():
+                    catalog_entry = catalog_entries.first()
+            
+            # Convert string dates to datetime objects
+            start_date = timezone.now().date()
+            if 'start_date' in med_data:
+                start_date = datetime.strptime(med_data['start_date'], '%Y-%m-%d').date()
+            
+            end_date = None
+            if 'end_date' in med_data:
+                end_date = datetime.strptime(med_data['end_date'], '%Y-%m-%d').date()
+            
+            # Create the medication
+            medication = Medication.objects.create(
+                medical_record=medical_record,
+                catalog_entry=catalog_entry,
+                prescribed_by=doctor,
+                appointment=appointment,  # Store the appointment reference
+                medication_name=med_data['medication_name'],
+                generic_name=med_data.get('generic_name', ''),
+                strength=med_data['strength'],
+                form=med_data['form'],
+                route=med_data['route'],
+                dosage=med_data['dosage'],
+                frequency=med_data['frequency'],
+                start_date=start_date,
+                end_date=end_date,
+                duration=med_data.get('duration', ''),
+                patient_instructions=med_data.get('patient_instructions', ''),
+                pharmacy_instructions=med_data.get('pharmacy_instructions', ''),
+                indication=med_data.get('indication', ''),
+                refills_authorized=med_data.get('refills_authorized', 0),
+                refills_remaining=med_data.get('refills_authorized', 0),
+                pharmacy_name=med_data.get('pharmacy_name', ''),
+                status='active'
+            )
+            
+            created_medications.append(medication)
+        
+        # Add a note to the appointment about the prescription
+        medication_names = ", ".join([m.medication_name for m in created_medications])
+        prescription_note = f"\n\nPrescription ({timezone.now().strftime('%Y-%m-%d %H:%M')}) - Dr. {doctor.user.get_full_name()}:\n"
+        prescription_note += f"Prescribed: {medication_names}"
+        
+        # Use direct SQL update to append notes without triggering validation
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE api_appointment SET notes = CONCAT(COALESCE(notes, ''), %s) WHERE appointment_id = %s",
+                [prescription_note, appointment_id]
+            )
+        
+        # Return the created medications
+        return Response({
+            'status': 'success',
+            'message': f'Successfully created {len(created_medications)} prescriptions',
+            'medications': MedicationSerializer(created_medications, many=True).data
+        }, status=status.HTTP_201_CREATED)
+        
+    except Exception as e:
+        import traceback
+        error_msg = f"Error creating prescriptions: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def patient_prescriptions(request, appointment_id=None):
+    """
+    Get prescriptions for a patient based on an appointment.
+    Doctors can see prescriptions for appointments assigned to them.
+    Patients can see their own prescriptions.
+    """
+    user = request.user
+    
+    try:
+        # If appointment_id is provided, get prescriptions for that appointment
+        if appointment_id:
+            try:
+                appointment = Appointment.objects.get(appointment_id=appointment_id)
+            except Appointment.DoesNotExist:
+                return Response({
+                    'status': 'error',
+                    'message': f'Appointment with ID {appointment_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check permissions
+            is_patient = appointment.patient == user
+            is_doctor = hasattr(user, 'doctor_profile') and appointment.doctor == user.doctor_profile
+            is_hospital_admin = hasattr(user, 'hospital_admin') and appointment.hospital == user.hospital_admin.hospital
+            
+            if not (is_patient or is_doctor or is_hospital_admin):
+                return Response({
+                    'status': 'error',
+                    'message': 'You do not have permission to view these prescriptions'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            # Get medical record for the patient
+            try:
+                medical_record = MedicalRecord.objects.get(user=appointment.patient)
+            except MedicalRecord.DoesNotExist:
+                return Response({
+                    'status': 'success',
+                    'message': 'No medical record found for this patient',
+                    'medications': []
+                }, status=status.HTTP_200_OK)
+            
+            # Get medications for this medical record
+            medications = Medication.objects.filter(
+                medical_record=medical_record
+            ).order_by('-start_date')
+            
+            return Response({
+                'status': 'success',
+                'appointment_id': appointment_id,
+                'patient_name': appointment.patient.get_full_name(),
+                'medications': MedicationSerializer(medications, many=True).data
+            }, status=status.HTTP_200_OK)
+        
+        # If no appointment_id is provided, get prescriptions for the user
+        # based on their role
+        if hasattr(user, 'doctor_profile'):
+            # Doctor: Get all prescriptions they have prescribed
+            doctor = user.doctor_profile
+            medications = Medication.objects.filter(
+                prescribed_by=doctor
+            ).order_by('-start_date')
+            
+            return Response({
+                'status': 'success',
+                'medications': MedicationSerializer(medications, many=True).data
+            }, status=status.HTTP_200_OK)
+        else:
+            # Patient: Get their own prescriptions
+            try:
+                medical_record = MedicalRecord.objects.get(user=user)
+            except MedicalRecord.DoesNotExist:
+                return Response({
+                    'status': 'success',
+                    'message': 'No medical record found',
+                    'medications': []
+                }, status=status.HTTP_200_OK)
+            
+            medications = Medication.objects.filter(
+                medical_record=medical_record
+            ).order_by('-start_date')
+            
+            return Response({
+                'status': 'success',
+                'medications': MedicationSerializer(medications, many=True).data
+            }, status=status.HTTP_200_OK)
+            
+    except Exception as e:
+        import traceback
+        error_msg = f"Error retrieving prescriptions: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def appointment_prescriptions(request, appointment_id):
+    """
+    Get prescriptions specifically for a given appointment.
+    This differs from patient_prescriptions as it only returns medications
+    that were prescribed during this specific appointment.
+    
+    Doctors can see prescriptions for appointments assigned to them.
+    Patients can see prescriptions for their own appointments.
+    """
+    user = request.user
+    
+    try:
+        # Get the appointment
+        try:
+            appointment = Appointment.objects.get(appointment_id=appointment_id)
+        except Appointment.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': f'Appointment with ID {appointment_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check permissions
+        is_patient = appointment.patient == user
+        is_doctor = hasattr(user, 'doctor_profile') and appointment.doctor == user.doctor_profile
+        is_hospital_admin = hasattr(user, 'hospital_admin') and appointment.hospital == user.hospital_admin.hospital
+        
+        if not (is_patient or is_doctor or is_hospital_admin):
+            return Response({
+                'status': 'error',
+                'message': 'You do not have permission to view these prescriptions'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Get medications specifically for this appointment
+        medications = Medication.objects.filter(
+            appointment=appointment
+        ).order_by('-created_at')
+        
+        return Response({
+            'status': 'success',
+            'appointment_id': appointment_id,
+            'patient_name': appointment.patient.get_full_name(),
+            'doctor_name': f"Dr. {appointment.doctor.user.get_full_name()}" if appointment.doctor else None,
+            'appointment_date': appointment.appointment_date,
+            'medications': MedicationSerializer(medications, many=True).data,
+            'medication_count': medications.count()
+        }, status=status.HTTP_200_OK)
+            
+    except Exception as e:
+        import traceback
+        error_msg = f"Error retrieving appointment prescriptions: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_msg)
         return Response({
             'status': 'error',

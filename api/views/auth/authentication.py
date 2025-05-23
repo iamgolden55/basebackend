@@ -368,6 +368,7 @@ class UserProfileUpdateView(RetrieveUpdateAPIView):
             print(f"[ProfileUpdate] PUT valid data: {serializer.validated_data}")
             self.perform_update(serializer)
             return Response(serializer.data)
+            print("Profile Data", serializer.data)
         else:
             # Log detailed validation errors for PUT
             print(f"[ProfileUpdate] PUT validation errors: {serializer.errors}")

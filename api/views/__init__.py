@@ -39,7 +39,11 @@ from api.views.hospital.hospital_views import (
     appointment_types,
     departments,
     pending_hospital_registrations,
-    doctor_appointments
+    doctor_appointments,
+    department_pending_appointments,
+    accept_appointment,
+    start_consultation,
+    complete_consultation
 )
 
 # Medical Views
