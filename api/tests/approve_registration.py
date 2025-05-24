@@ -3,13 +3,17 @@ import django
 import sys
 from django.utils import timezone
 
+# Adjust the Python path to include the parent directory of 'api'
+base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(base_dir)
+
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'server.settings')
 django.setup()
 
 from api.models import HospitalRegistration, CustomUser
 
 # Find registration for the specified email
-user_email = "eruwagolden@gmail.com"
+user_email = "bethelakande@gmail.com"
 
 try:
     # Find the registration

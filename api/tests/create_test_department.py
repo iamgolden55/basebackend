@@ -33,11 +33,11 @@ def create_test_department():
         
         # Create a new department using the hospital's create_department method
         department = hospital.create_department(
-            name="Cardiology Department",
-            code="CARD-001",
+            name="Cardiology",
+            code="CARD-002",
             department_type="medical",
             description="Specializes in diagnosis and treatment of heart conditions",
-            floor_number="3",
+            floor_number="5",
             wing="north",
             extension_number="3001",
             emergency_contact="3911",

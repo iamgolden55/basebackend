@@ -15,6 +15,7 @@ from django.utils import timezone
 
 # Import MedicalRecord model
 from api.models.medical.medical_record import MedicalRecord
+from api.models.medical.medication import Medication, MedicationCatalog
 
 CustomUser = get_user_model()
 
@@ -698,6 +699,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
             'status_display',
             'chief_complaint',
             'symptoms',
+            'symptoms_data',
             'medical_history',
             'allergies',
             'current_medications',
@@ -1019,6 +1021,41 @@ class ChangePasswordSerializer(serializers.Serializer):
                 'confirm_password': "New passwords don't match."
             })
         return data
+
+
+class MedicationSerializer(serializers.ModelSerializer):
+    """Serializer for the Medication model"""
+    medication_name = serializers.CharField(required=True)
+    strength = serializers.CharField(required=True)
+    form = serializers.CharField(required=True)
+    route = serializers.CharField(required=True)
+    dosage = serializers.CharField(required=True)
+    frequency = serializers.CharField(required=True)
+    start_date = serializers.DateField(required=False)  # Make start_date optional
+    end_date = serializers.DateField(required=False, allow_null=True)
+    duration = serializers.CharField(required=False, allow_null=True)
+    patient_instructions = serializers.CharField(required=False, allow_null=True)
+    pharmacy_instructions = serializers.CharField(required=False, allow_null=True)
+    indication = serializers.CharField(required=False, allow_null=True)
+    refills_authorized = serializers.IntegerField(default=0)
+    pharmacy_name = serializers.CharField(required=False, allow_null=True)
+
+    class Meta:
+        model = Medication
+        fields = [
+            'id', 'medication_name', 'generic_name', 'strength', 'form', 'route',
+            'dosage', 'frequency', 'start_date', 'end_date', 'is_ongoing',
+            'duration', 'patient_instructions', 'pharmacy_instructions', 'indication',
+            'prescription_number', 'refills_authorized', 'refills_remaining',
+            'status', 'pharmacy_name', 'priority'
+        ]
+        read_only_fields = ['id', 'generic_name', 'prescription_number', 'refills_remaining']
+
+
+class PrescriptionSerializer(serializers.Serializer):
+    """Serializer for creating multiple medications as prescriptions"""
+    appointment_id = serializers.CharField(required=False)
+    medications = MedicationSerializer(many=True)
 
 
 class HospitalAdminLoginSerializer(serializers.Serializer):

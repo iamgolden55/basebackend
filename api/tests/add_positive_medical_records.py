@@ -6,6 +6,11 @@ import random
 from datetime import datetime, timedelta
 from django.utils import timezone
 
+
+# Adjust the Python path to include the parent directory of 'api'
+base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(base_dir)
+
 # Set up Django environment
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'server.settings')
 django.setup()
@@ -19,7 +24,7 @@ def generate_date_in_past(days_ago):
 
 def main():
     # Get user by email
-    email = 'eruwagolden55@gmail.com'
+    email = 'bethelakande@gmail.com'
     try:
         user = CustomUser.objects.get(email=email)
         print(f"Found user: {user.email} (ID: {user.id})")
