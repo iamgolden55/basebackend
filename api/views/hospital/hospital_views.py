@@ -2330,18 +2330,10 @@ def create_prescription(request, appointment_id=None):
             appointment_id = request.data.get('appointment_id')
         
         # Prepare data for validation
-        # Check if the request data is a single medication or a list of medications
-        medications = request.data.get('medications', [])
-        
-        # If it's a single medication object (not in a 'medications' array)
-        if not medications and 'medication_name' in request.data:
-            medications = [request.data]
-            
         data = {
             'appointment_id': appointment_id,
-            'medications': medications
+            'medications': request.data.get('medications', [])
         }
-        print(f"DEBUG - Prescription data: {data}")  # Debug log
         
         # Validate the data
         serializer = PrescriptionSerializer(data=data)
@@ -2387,15 +2379,10 @@ def create_prescription(request, appointment_id=None):
                 if catalog_entries.exists():
                     catalog_entry = catalog_entries.first()
             
-            # Always set start_date to today if not provided
+            # Convert string dates to datetime objects
             start_date = timezone.now().date()
-            if 'start_date' in med_data and med_data['start_date']:
-                try:
-                    start_date = datetime.strptime(med_data['start_date'], '%Y-%m-%d').date()
-                except (ValueError, TypeError):
-                    # If there's any error parsing the date, fall back to today's date
-                    print(f"WARNING: Invalid start_date format '{med_data.get('start_date')}'. Using today's date instead.")
-                    # Keep using today's date that we already set
+            if 'start_date' in med_data:
+                start_date = datetime.strptime(med_data['start_date'], '%Y-%m-%d').date()
             
             end_date = None
             if 'end_date' in med_data:
@@ -2512,7 +2499,7 @@ def patient_prescriptions(request, appointment_id=None):
                 'medications': MedicationSerializer(medications, many=True).data
             }, status=status.HTTP_200_OK)
         
-        # If no appointment_id is provided, get prescriptions for the user
+        """# If no appointment_id is provided, get prescriptions for the user
         # based on their role
         if hasattr(user, 'doctor_profile'):
             # Doctor: Get all prescriptions they have prescribed
@@ -2525,25 +2512,25 @@ def patient_prescriptions(request, appointment_id=None):
                 'status': 'success',
                 'medications': MedicationSerializer(medications, many=True).data
             }, status=status.HTTP_200_OK)
-        else:
-            # Patient: Get their own prescriptions
-            try:
-                medical_record = MedicalRecord.objects.get(user=user)
-            except MedicalRecord.DoesNotExist:
-                return Response({
-                    'status': 'success',
-                    'message': 'No medical record found',
-                    'medications': []
-                }, status=status.HTTP_200_OK)
-            
-            medications = Medication.objects.filter(
-                medical_record=medical_record
-            ).order_by('-start_date')
-            
+        else:"""
+        # Patient: Get their own prescriptions
+        try:
+            medical_record = MedicalRecord.objects.get(user=user)
+        except MedicalRecord.DoesNotExist:
             return Response({
                 'status': 'success',
-                'medications': MedicationSerializer(medications, many=True).data
+                'message': 'No medical record found',
+                'medications': []
             }, status=status.HTTP_200_OK)
+        
+        medications = Medication.objects.filter(
+            medical_record=medical_record
+        ).order_by('-start_date')
+        
+        return Response({
+            'status': 'success',
+            'medications': MedicationSerializer(medications, many=True).data
+        }, status=status.HTTP_200_OK)
             
     except Exception as e:
         import traceback
