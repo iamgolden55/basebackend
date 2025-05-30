@@ -3,21 +3,26 @@ version: '3.8'
 services:
   web:
     build: .
-    command: >-
-      bash -c "python manage.py migrate &&
-               python manage.py collectstatic --no-input &&
+    command: >
+      bash -c "chmod +x /app/scripts/import_db.sh &&
+               /app/scripts/import_db.sh &&
                gunicorn server.wsgi:application --bind 0.0.0.0:8000"
     volumes:
       - .:/app
       - static_volume:/app/staticfiles
       - media_volume:/app/media
+      - ./backup:/app/backup
     ports:
       - "8000:8000"
     environment:
       - POSTGRES_HOST=db
+      - POSTGRES_DB=medic_db
+      - POSTGRES_USER=medic_db
+      - POSTGRES_PASSWORD=publichealth
       - REDIS_URL=redis://redis:6379/1
+      - DEBUG=True
     env_file:
-      - .env
+      - .env.example
     depends_on:
       - db
       - redis
