@@ -16,6 +16,8 @@ from django.utils import timezone
 # Import MedicalRecord model
 from api.models.medical.medical_record import MedicalRecord
 from api.models.medical.medication import Medication, MedicationCatalog
+from api.models.medical.patient_admission import PatientAdmission
+from api.models.medical.patient_transfer import PatientTransfer
 
 CustomUser = get_user_model()
 
@@ -75,7 +77,7 @@ class UserSerializer(serializers.ModelSerializer):
         model = CustomUser
         fields = [
             'email', 'password', 'date_of_birth', 'gender', 'country', 'city', 'phone', 'state',
-            'nin', 'consent_terms', 'consent_hipaa', 'consent_data_processing', 'full_name',
+            'nin', 'hpn', 'consent_terms', 'consent_hipaa', 'consent_data_processing', 'full_name',
             'preferred_language', 'secondary_languages', 'custom_language'
         ]
         extra_kwargs = {
@@ -1141,3 +1143,112 @@ class Hospital2FAVerificationSerializer(serializers.Serializer):
     verification_code = serializers.CharField(max_length=8)
     device_id = serializers.CharField(required=False, allow_blank=True)
     remember_device = serializers.BooleanField(default=False)
+
+
+# Patient Admission System Serializers
+
+class PatientAdmissionListSerializer(serializers.ModelSerializer):
+    """Serializer for listing patient admissions"""
+    patient_name = serializers.SerializerMethodField()
+    patient_age = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+    attending_doctor_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = PatientAdmission
+        fields = [
+            'id', 'admission_id', 'patient_name', 'patient_age', 'status', 
+            'admission_date', 'department_name', 'attending_doctor_name',
+            'is_icu_bed', 'priority', 'reason_for_admission', 'bed_identifier',
+            'is_registered_patient', 'temp_patient_details'
+        ]
+    
+    def get_patient_name(self, obj):
+        # Handle both registered patients and emergency admissions
+        if obj.patient:
+            return obj.patient.get_full_name()
+        elif obj.temp_patient_details:
+            first_name = obj.temp_patient_details.get('first_name', '')
+            last_name = obj.temp_patient_details.get('last_name', '')
+            return f"{first_name} {last_name}".strip()
+        else:
+            return "Unknown Patient"
+    
+    def get_patient_age(self, obj):
+        """Calculate patient age from different sources"""
+        if obj.patient and obj.patient.date_of_birth:
+            # Calculate age from registered patient's date of birth
+            from datetime import date
+            today = date.today()
+            dob = obj.patient.date_of_birth
+            age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+            return age
+        elif obj.temp_patient_details:
+            # Use age from temp patient details if available
+            if obj.temp_patient_details.get('age'):
+                return obj.temp_patient_details.get('age')
+            # Or calculate from date_of_birth if available
+            elif obj.temp_patient_details.get('date_of_birth'):
+                from datetime import date
+                try:
+                    dob = date.fromisoformat(obj.temp_patient_details.get('date_of_birth'))
+                    today = date.today()
+                    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                    return age
+                except:
+                    pass
+        return None
+    
+    def get_department_name(self, obj):
+        return obj.department.name if obj.department else None
+    
+    def get_attending_doctor_name(self, obj):
+        return obj.attending_doctor.user.get_full_name() if obj.attending_doctor else None
+
+class PatientAdmissionSerializer(serializers.ModelSerializer):
+    """Detailed serializer for patient admissions"""
+    patient_name = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+    attending_doctor_name = serializers.SerializerMethodField()
+    hospital_name = serializers.SerializerMethodField()
+    current_length_of_stay = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = PatientAdmission
+        fields = '__all__'
+    
+    def get_patient_name(self, obj):
+        # Handle both registered patients and emergency admissions
+        if obj.patient:
+            return obj.patient.get_full_name()
+        elif obj.temp_patient_details:
+            first_name = obj.temp_patient_details.get('first_name', '')
+            last_name = obj.temp_patient_details.get('last_name', '')
+            return f"{first_name} {last_name}".strip()
+        else:
+            return "Unknown Patient"
+    
+    def get_department_name(self, obj):
+        return obj.department.name if obj.department else None
+    
+    def get_attending_doctor_name(self, obj):
+        return obj.attending_doctor.user.get_full_name() if obj.attending_doctor else None
+    
+    def get_hospital_name(self, obj):
+        return obj.hospital.name if obj.hospital else None
+    
+    def get_current_length_of_stay(self, obj):
+        return obj.current_length_of_stay
+
+class PatientTransferSerializer(serializers.Serializer):
+    """Serializer for transferring patients"""
+    department_id = serializers.IntegerField()
+    doctor_id = serializers.IntegerField(required=False, allow_null=True)
+    is_icu_bed = serializers.BooleanField(required=False)
+    reason = serializers.CharField(required=False, allow_blank=True)
+
+class PatientDischargeSerializer(serializers.Serializer):
+    """Serializer for discharging patients"""
+    discharge_destination = serializers.CharField(required=False, allow_blank=True)
+    discharge_summary = serializers.CharField(required=False, allow_blank=True)
+    followup_instructions = serializers.CharField(required=False, allow_blank=True)

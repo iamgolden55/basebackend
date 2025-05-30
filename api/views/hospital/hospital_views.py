@@ -92,27 +92,42 @@ class UserHospitalRegistrationsView(generics.ListAPIView):
     
     def get_queryset(self):
         user = self.request.user
-        if hasattr(user, 'is_hospital_admin') and user.is_hospital_admin:
+        status_filter = self.request.query_params.get('status')
+        
+        if user.role == 'hospital_admin':
             # For hospital admins: show all registrations for their hospital
-            return HospitalRegistration.objects.filter(
-                hospital=user.hospital
-            ).select_related('user', 'hospital')
+            # FIX: Get the hospital where this user is the admin
+            admin_hospital = Hospital.objects.filter(user=user).first()
+            if admin_hospital:
+                queryset = HospitalRegistration.objects.filter(
+                    hospital=admin_hospital
+                ).select_related('user', 'hospital')
+                
+                # Apply status filter if provided
+                if status_filter:
+                    queryset = queryset.filter(status=status_filter)
+                    
+                return queryset
+            else:
+                # If admin is not linked to any hospital, return empty queryset
+                return HospitalRegistration.objects.none()
         else:
             # For regular users: show their own registrations
-            return HospitalRegistration.objects.filter(
+            queryset = HospitalRegistration.objects.filter(
                 user=user
             ).select_related('user', 'hospital')
+            
+            # Apply status filter if provided
+            if status_filter:
+                queryset = queryset.filter(status=status_filter)
+                
+            return queryset
 
     def list(self, request, *args, **kwargs):
         queryset = self.get_queryset()
         serializer = self.get_serializer(queryset, many=True)
         
-        if not serializer.data:
-            return Response({
-                "message": "No registrations found! 🔍",
-                "hint": "Users need to register first using /api/hospitals/register/"
-            }, status=status.HTTP_200_OK)
-            
+        # Always return an array, even if empty
         return Response(serializer.data)
 
 class SetPrimaryHospitalView(APIView):
@@ -1246,10 +1261,75 @@ def departments(request):
             
         departments = Department.objects.filter(hospital=primary_registration.hospital)
     
-    data = [{"id": dept.id, "name": dept.name, "code": dept.code} for dept in departments]
+    # 🛏️ ENHANCED WITH BED MAGIC! ✨
+    # Build comprehensive department data with bed tracking, staff info, and patient statistics
+    data = []
+    for dept in departments:
+        department_data = {
+            # Basic Info
+            "id": dept.id,
+            "name": dept.name,
+            "code": dept.code,
+            "department_type": dept.department_type,
+            "is_active": dept.is_active,
+            "description": dept.description,
+            
+            # Location & Contact
+            "floor_number": dept.floor_number,
+            "wing": dept.wing,
+            "extension_number": dept.extension_number,
+            "emergency_contact": dept.emergency_contact,
+            "email": dept.email,
+            
+            # 🛏️ BED TRACKING MAGIC:
+            "total_beds": dept.total_beds,
+            "occupied_beds": dept.occupied_beds,
+            "available_beds": dept.available_beds,  # Calculated property
+            "icu_beds": dept.icu_beds,
+            "occupied_icu_beds": dept.occupied_icu_beds,
+            "available_icu_beds": dept.available_icu_beds,  # Calculated property
+            "bed_capacity": dept.bed_capacity,
+            "total_available_beds": dept.total_available_beds,  # Calculated property
+            "bed_utilization_rate": round(dept.bed_utilization_rate, 1),  # Calculated property
+            
+            # 👥 STAFF MANAGEMENT MAGIC:
+            "current_staff_count": dept.current_staff_count,
+            "minimum_staff_required": dept.minimum_staff_required,
+            "is_understaffed": dept.is_understaffed,  # Calculated property
+            "recommended_staff_ratio": dept.recommended_staff_ratio,
+            "staff_utilization_rate": round(dept.staff_utilization_rate, 1),  # Calculated property
+            
+            # 🏥 PATIENT STATISTICS MAGIC:
+            "current_patient_count": dept.current_patient_count,
+            "utilization_rate": round(dept.utilization_rate, 1),  # Calculated property
+            
+            # ⏰ OPERATIONAL INFO:
+            "is_24_hours": dept.is_24_hours,
+            "operating_hours": dept.operating_hours,
+            "appointment_duration": dept.appointment_duration,
+            "max_daily_appointments": dept.max_daily_appointments,
+            "requires_referral": dept.requires_referral,
+            
+            # 💰 BUDGET TRACKING:
+            "annual_budget": float(dept.annual_budget) if dept.annual_budget else None,
+            "budget_year": dept.budget_year,
+            "budget_utilized": float(dept.budget_utilized) if dept.budget_utilized else 0,
+            "budget_utilization_rate": round(dept.budget_utilization_rate, 1) if dept.annual_budget else 0,
+            "remaining_budget": float(dept.remaining_budget) if dept.annual_budget else None,
+            
+            # 🏥 DEPARTMENT CLASSIFICATION:
+            "is_clinical": dept.is_clinical,  # Calculated property
+            "is_support": dept.is_support,    # Calculated property
+            "is_administrative": dept.is_administrative,  # Calculated property
+            "is_available_for_appointments": dept.is_available_for_appointments,  # Calculated property
+        }
+        data.append(department_data)
+    
     return Response({
         'status': 'success',
-        'departments': data
+        'departments': data,
+        'total_departments': len(data),
+        'message': f'Successfully retrieved {len(data)} departments with comprehensive bed tracking data! 🏥✨'
     })
 
 # Add this new class for doctor assignment

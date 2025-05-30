@@ -2,7 +2,6 @@
 
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
-from django.utils import timezone
 from .hospital import Hospital
 from api.models.user.custom_user import CustomUser
 from django.db import models
@@ -34,13 +33,10 @@ class HospitalAdmin(models.Model):
     hospital = models.ForeignKey('Hospital', on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     position = models.CharField(max_length=255)
-    email = models.EmailField(unique=True, help_text="The admin username used for login (not a real email inbox)")
-    contact_email = models.EmailField(null=True, blank=True, help_text="The real email address for communications")
+    email = models.EmailField(unique=True)
+    contact_email = models.EmailField(blank=True, null=True, help_text="Real email for receiving notifications")
+    password_change_required = models.BooleanField(default=False, help_text="Flag to force password change on next login")
     password = models.CharField(max_length=128)  # This will be removed later
-    password_change_required = models.BooleanField(default=True, help_text="Whether the admin must change their password on next login")
-    last_password_change = models.DateTimeField(null=True, blank=True, help_text="When the admin last changed their password")
-    # Using a function to provide a default for migrations
-    created_at = models.DateTimeField(default=timezone.now)
     
     # This will not be stored in the database, just used to pass data during object creation
     _user_data = None

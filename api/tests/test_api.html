@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hospital Registration API Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        h1, h2 {
+            color: #2c3e50;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .registration-item {
+            background-color: #f8f9fa;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 4px;
+            border-left: 4px solid #3498db;
+        }
+        .approve-btn {
+            background-color: #27ae60;
+        }
+        .approve-btn:hover {
+            background-color: #219653;
+        }
+    </style>
+</head>
+<body>
+    <h1>Hospital Registration API Test</h1>
+    
+    <div>
+        <h2>1. Get Pending Registrations</h2>
+        <button id="getPendingBtn">Get Pending Registrations</button>
+        <div id="pendingResults">
+            <p>Results will appear here...</p>
+        </div>
+    </div>
+    
+    <div>
+        <h2>2. Approve Registration</h2>
+        <div id="approvalSection">
+            <p>First get pending registrations to see available registrations to approve.</p>
+        </div>
+        <div id="approvalResults">
+            <p>Approval results will appear here...</p>
+        </div>
+    </div>
+    
+    <script>
+        // Base URL for API requests
+        const BASE_URL = window.location.origin;
+        
+        // Function to get pending registrations
+        async function getPendingRegistrations() {
+            try {
+                const response = await fetch(`${BASE_URL}/api/hospitals/registrations/pending/`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include' // Important: include cookies for session authentication
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                displayPendingRegistrations(data);
+                return data;
+            } catch (error) {
+                console.error('Error fetching pending registrations:', error);
+                document.getElementById('pendingResults').innerHTML = `
+                    <p style="color: red;">Error fetching pending registrations: ${error.message}</p>
+                    <p>Response status: ${error.status || 'Unknown'}</p>
+                `;
+                return null;
+            }
+        }
+        
+        // Function to approve a registration
+        async function approveRegistration(registrationId) {
+            try {
+                const response = await fetch(`${BASE_URL}/api/hospitals/registrations/${registrationId}/approve/`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    credentials: 'include' // Important: include cookies for session authentication
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                document.getElementById('approvalResults').innerHTML = `
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+                
+                // Refresh the pending registrations list
+                getPendingRegistrations();
+                
+                return data;
+            } catch (error) {
+                console.error('Error approving registration:', error);
+                document.getElementById('approvalResults').innerHTML = `
+                    <p style="color: red;">Error approving registration: ${error.message}</p>
+                `;
+                return null;
+            }
+        }
+        
+        // Function to display pending registrations
+        function displayPendingRegistrations(data) {
+            const pendingResultsElement = document.getElementById('pendingResults');
+            const approvalSectionElement = document.getElementById('approvalSection');
+            
+            // Check if we're looking at hospital admin view or system admin view
+            let registrations = [];
+            let hospitalName = '';
+            
+            if (data.pending_registrations) {
+                // Hospital admin view
+                registrations = data.pending_registrations;
+                hospitalName = data.hospital_name || 'your hospital';
+                pendingResultsElement.innerHTML = `<p>Found ${data.total_pending} pending registration(s) for ${hospitalName}</p>`;
+            } else if (data.hospitals_with_pending) {
+                // System admin view
+                const hospitals = data.hospitals_with_pending;
+                pendingResultsElement.innerHTML = `<p>Found ${data.total_pending_registrations} pending registration(s) across ${data.total_hospitals} hospital(s)</p>`;
+                
+                // Flatten the registrations list
+                hospitals.forEach(hospital => {
+                    hospital.pending_registrations.forEach(reg => {
+                        registrations.push(reg);
+                    });
+                });
+            } else {
+                pendingResultsElement.innerHTML = `<p>Unexpected response format.</p><pre>${JSON.stringify(data, null, 2)}</pre>`;
+                return;
+            }
+            
+            // Display pending registrations
+            if (registrations.length === 0) {
+                pendingResultsElement.innerHTML += `<p>No pending registrations found.</p>`;
+                approvalSectionElement.innerHTML = `<p>No pending registrations available to approve.</p>`;
+                return;
+            }
+            
+            // Add registrations to the pending results section
+            registrations.forEach(reg => {
+                pendingResultsElement.innerHTML += `
+                    <div class="registration-item">
+                        <p><strong>ID:</strong> ${reg.id}</p>
+                        <p><strong>User:</strong> ${reg.user_name} (${reg.user_email})</p>
+                        <p><strong>Hospital:</strong> ${reg.hospital_name}</p>
+                        <p><strong>Registration date:</strong> ${reg.created_at}</p>
+                    </div>
+                `;
+            });
+            
+            // Add approval buttons to the approval section
+            approvalSectionElement.innerHTML = `<p>Select a registration to approve:</p>`;
+            registrations.forEach(reg => {
+                approvalSectionElement.innerHTML += `
+                    <div class="registration-item">
+                        <p><strong>ID:</strong> ${reg.id}</p>
+                        <p><strong>User:</strong> ${reg.user_name} (${reg.user_email})</p>
+                        <p><strong>Hospital:</strong> ${reg.hospital_name}</p>
+                        <button class="approve-btn" onclick="approveRegistration(${reg.id})">Approve Registration</button>
+                    </div>
+                `;
+            });
+        }
+        
+        // Add event listener to the Get Pending Registrations button
+        document.getElementById('getPendingBtn').addEventListener('click', getPendingRegistrations);
+    </script>
+</body>
+</html>
