@@ -1912,6 +1912,7 @@ def complete_consultation(request, appointment_id):
     """
     user = request.user
     print("request.data", request.data)
+    
     try:
         # Check if user has a doctor profile
         if not hasattr(user, 'doctor_profile'):
@@ -2679,4 +2680,163 @@ def appointment_prescriptions(request, appointment_id):
             'status': 'error',
             'message': str(e),
             'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_appointment_notes(request, appointment_id):
+    """
+    Get notes for a specific appointment.
+    Doctors can see notes for appointments assigned to them.
+    Patients can see notes for their own appointments.
+    """
+    user = request.user
+    
+    try:
+        # Get the appointment
+        appointment = get_object_or_404(Appointment, appointment_id=appointment_id)
+        
+        # Check permissions
+        is_patient = appointment.patient == user
+        is_doctor = hasattr(user, 'doctor_profile') and appointment.doctor == user.doctor_profile
+        
+        if not (is_patient or is_doctor):
+            return Response({
+                'status': 'error',
+                'message': 'You do not have permission to view these notes'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        return Response({
+            'status': 'success',
+            'appointment_id': appointment_id,
+            'notes': appointment.notes,
+        })
+        
+    except Exception as e:
+        logger.error(f"Error getting appointment notes: {str(e)}")
+        return Response({
+            'status': 'error',
+            'message': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['PATCH', 'PUT'])
+@permission_classes([IsAuthenticated])
+def edit_appointment_notes(request, appointment_id):
+    """
+    Edit notes for a specific appointment.
+    Doctors can edit notes for appointments assigned to them.
+    Patients can edit notes for their own appointments.
+    """
+    user = request.user
+    
+    try:
+        # Get the appointment
+        appointment = get_object_or_404(Appointment, appointment_id=appointment_id)
+        
+
+        try:
+            print('data', request.data)
+        except Exception as e:
+            logger.error(f"Error getting appointment notes: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        # Check permissions
+        is_patient = appointment.patient == user
+        is_doctor = hasattr(user, 'doctor_profile') and appointment.doctor == user.doctor_profile
+        
+        if not (is_patient or is_doctor):
+            return Response({
+                'status': 'error',
+                'message': 'You do not have permission to edit these notes'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Update the notes
+        try:
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE api_appointment SET notes = %s WHERE appointment_id = %s",
+                    [request.data.get('general_notes', ''), appointment_id]
+                )
+                print("Notes updated successfully")
+
+                # Refresh the appointment from the database
+            appointment.refresh_from_db()
+
+        except Exception as e:
+            logger.error(f"Error updating appointment notes: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        return Response({
+            'status': 'success',
+            'appointment_id': appointment_id,
+            'notes': appointment.notes,
+        })
+        
+    except Exception as e:
+        logger.error(f"Error editing appointment notes: {str(e)}")
+        return Response({
+            'status': 'error',
+            'message': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_appointment_notes(request, appointment_id):
+    """
+    Delete notes for a specific appointment.
+    Doctors can delete notes for appointments assigned to them.
+    Patients can delete notes for their own appointments.
+    """
+    user = request.user
+    
+    try:
+        # Get the appointment
+        appointment = get_object_or_404(Appointment, appointment_id=appointment_id)
+        
+        # Check permissions
+        is_patient = appointment.patient == user
+        is_doctor = hasattr(user, 'doctor_profile') and appointment.doctor == user.doctor_profile
+        
+        if not (is_patient or is_doctor):
+            return Response({
+                'status': 'error',
+                'message': 'You do not have permission to delete these notes'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Delete the notes
+        try:
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE api_appointment SET notes = '' WHERE appointment_id = %s",
+                    [appointment_id]
+                )
+                print("Notes deleted successfully")
+                
+                # Refresh the appointment from the database
+                appointment.refresh_from_db()
+        except Exception as e:
+            logger.error(f"Error deleting appointment notes: {str(e)}")
+            return Response({
+                'status': 'error',
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        return Response({
+            'status': 'success',
+            'appointment_id': appointment_id,
+        })
+        
+    except Exception as e:
+        logger.error(f"Error deleting appointment notes: {str(e)}")
+        return Response({
+            'status': 'error',
+            'message': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

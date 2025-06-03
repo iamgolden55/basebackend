@@ -53,7 +53,10 @@ from api.views.hospital.hospital_views import (
     mark_appointment_no_show,
     create_prescription,
     patient_prescriptions,
-    appointment_prescriptions
+    appointment_prescriptions,
+    get_appointment_notes,
+    edit_appointment_notes,
+    delete_appointment_notes
 )
 
 # Medical views
@@ -223,6 +226,11 @@ urlpatterns = [
     path('appointments/<str:appointment_id>/prescriptions/view/', appointment_prescriptions, name='appointment-prescriptions'),
     path('prescriptions/', patient_prescriptions, name='patient-prescriptions'),
     path('prescriptions/<str:appointment_id>/', patient_prescriptions, name='patient-prescriptions-by-appointment'),
+    
+    # Appointment notes endpoint
+    path('appointments/<str:appointment_id>/notes/', get_appointment_notes, name='get-appointment-notes'),
+    path('appointments/<str:appointment_id>/notes/edit/', edit_appointment_notes, name='edit-appointment-notes'),
+    path('appointments/<str:appointment_id>/notes/delete/', delete_appointment_notes, name='delete-appointment-notes'),
 ]
 
 # Available endpoints:

@@ -191,15 +191,15 @@ class UserSerializer(serializers.ModelSerializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     email = serializers.EmailField(read_only=True)
-    date_of_birth = serializers.DateField(required=False)  # Add this! 📅
-    gender = serializers.CharField(required=False)  # Add this too! 👥
+    date_of_birth = serializers.DateField(required=False)  # Add this! 
+    gender = serializers.CharField(required=False)  # Add this too! 
     phone = serializers.CharField(
-        min_length=10,  # Minimum length 📏
-        allow_blank=False,  # Can't be empty! ❌
+        min_length=10,  # Minimum length 
+        allow_blank=False,  # Can't be empty! 
         error_messages={
-            'min_length': 'Phone number must be at least 10 digits long! 📱',
-            'blank': 'Phone number cannot be empty! ☎️',
-            'required': 'Phone number is required! 📞'
+            'min_length': 'Phone number must be at least 10 digits long! ',
+            'blank': 'Phone number cannot be empty! ',
+            'required': 'Phone number is required! '
         }
     )
     hpn = serializers.CharField(read_only=True)
@@ -225,6 +225,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'invalid': 'Please enter a valid language name.'
         }
     )
+    role = serializers.CharField(read_only=True)
 
     class Meta:
         model = CustomUser
@@ -233,7 +234,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'email',
             'phone', 'country', 
             'state', 'city', 'hpn', 'nin', 'date_of_birth', 'gender',
-            'preferred_language', 'secondary_languages', 'custom_language'
+            'preferred_language', 'secondary_languages', 'custom_language', 'role'
         ]
     
     def get_full_name(self, obj):
@@ -341,14 +342,14 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     new_password = serializers.CharField(
         min_length=8,
         error_messages={
-            'min_length': 'Password must be at least 8 characters long! 🔒'
+            'min_length': 'Password must be at least 8 characters long! '
         }
     )
     confirm_password = serializers.CharField()
 
     def validate(self, data):
         if data['new_password'] != data['confirm_password']:
-            raise serializers.ValidationError("Passwords don't match! 🚫")
+            raise serializers.ValidationError("Passwords don't match! ")
         return data  
 
 class OnboardingStatusSerializer(serializers.ModelSerializer):
@@ -1033,7 +1034,7 @@ class MedicationSerializer(serializers.ModelSerializer):
     route = serializers.CharField(required=True)
     dosage = serializers.CharField(required=True)
     frequency = serializers.CharField(required=True)
-    start_date = serializers.DateField(required=False)  # Make start_date optional
+    start_date = serializers.DateField(required=False)  
     end_date = serializers.DateField(required=False, allow_null=True)
     duration = serializers.CharField(required=False, allow_null=True)
     patient_instructions = serializers.CharField(required=False, allow_null=True)
@@ -1041,6 +1042,7 @@ class MedicationSerializer(serializers.ModelSerializer):
     indication = serializers.CharField(required=False, allow_null=True)
     refills_authorized = serializers.IntegerField(default=0)
     pharmacy_name = serializers.CharField(required=False, allow_null=True)
+    prescribed_by = DoctorSerializer(read_only=True)
 
     class Meta:
         model = Medication
@@ -1049,9 +1051,9 @@ class MedicationSerializer(serializers.ModelSerializer):
             'dosage', 'frequency', 'start_date', 'end_date', 'is_ongoing',
             'duration', 'patient_instructions', 'pharmacy_instructions', 'indication',
             'prescription_number', 'refills_authorized', 'refills_remaining',
-            'status', 'pharmacy_name', 'priority'
+            'status', 'pharmacy_name', 'priority', 'prescribed_by'
         ]
-        read_only_fields = ['id', 'generic_name', 'prescription_number', 'refills_remaining']
+        read_only_fields = ['id', 'generic_name', 'prescription_number', 'refills_remaining', 'prescribed_by']
 
 
 class PrescriptionSerializer(serializers.Serializer):
