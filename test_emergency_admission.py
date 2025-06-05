@@ -103,14 +103,14 @@ def test_emergency_admission():
         "preferred_language": "English"
     }
     
-    # Create admission
+    # Create admission using the model fields as expected by serializer
     admission = PatientAdmission.objects.create(
         admission_id=generate_admission_id(),
-        hospital=hospital,
-        department=department,
+        hospital=hospital,  # serializer maps hospital_id to this
+        department=department,  # serializer maps department_id to this
         status='pending',
         admission_type='emergency',
-        priority='urgent',
+        priority='urgent',  # must be one of: emergency, urgent, elective
         reason_for_admission="Chest pain and shortness of breath",
         is_icu_bed=False,
         attending_doctor=doctor,

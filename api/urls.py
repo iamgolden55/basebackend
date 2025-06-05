@@ -57,7 +57,9 @@ from api.views.hospital.hospital_views import (
     get_appointment_notes,
     edit_appointment_notes,
     delete_appointment_notes,
-    get_departments_for_doctor
+    get_departments_for_doctor,
+    get_hospital_departments,
+    get_doctor_based_on_department
 )
 
 # Medical views
@@ -252,6 +254,12 @@ urlpatterns = [
     
     # Department endpoints
     path('departments/<str:hospital_id>/', get_departments_for_doctor, name='get-departments-for-doctor'),
+
+    # Hospital departments endpoint
+    path('hospitals/departments/<str:hospital_id>', get_hospital_departments, name='hospital-departments'),
+
+    # Get doctors based on department
+    path('doctors/department/<str:department_id>', get_doctor_based_on_department, name='doctor-based-on-department'),
 ]
 
 # Available endpoints:

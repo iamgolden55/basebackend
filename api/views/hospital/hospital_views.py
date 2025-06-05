@@ -35,7 +35,7 @@ from api.serializers import (
     HospitalAdminRegistrationSerializer, ExistingUserToAdminSerializer,
     AppointmentCancelSerializer, AppointmentRescheduleSerializer,
     AppointmentApproveSerializer, AppointmentReferSerializer,
-    MedicationSerializer, PrescriptionSerializer, DepartmentSerializer
+    MedicationSerializer, PrescriptionSerializer, DepartmentSerializer, DoctorSerializer
 )
 from api.utils.location_utils import get_location_from_ip
 
@@ -1902,36 +1902,300 @@ def start_consultation(request, appointment_id):
         if appointment.doctor != doctor:
             return Response({
                 'status': 'error',
-                'message': 'You can only start consultations for appointments assigned to you'
+                'message': 'You can only mark appointments as no-show for appointments assigned to you'
             }, status=status.HTTP_403_FORBIDDEN)
         
-        # Start the consultation
+        # Check if appointment can be marked as no-show
+        if appointment.status != 'confirmed':
+            return Response({
+                'status': 'error',
+                'message': f'Cannot mark appointment with status {appointment.status} as no-show. Only confirmed appointments can be marked as no-show.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get no-show notes
+        no_show_notes = request.data.get('no_show_notes', '')
+        
+        # Update appointment status
         try:
-            appointment.start_consultation(doctor)
+            # Use direct SQL update to avoid validation issues
+            from django.db import connection
+            with connection.cursor() as cursor:
+                # Update appointment status and no-show details
+                timestamp = timezone.now()
+                cursor.execute(
+                    """
+                    UPDATE api_appointment 
+                    SET status = 'no_show', 
+                        notes = CONCAT(COALESCE(notes, ''), %s)
+                    WHERE appointment_id = %s
+                    """,
+                    [f"\n\nNo-Show ({timestamp.strftime('%Y-%m-%d %H:%M')}) - Dr. {doctor.user.get_full_name()}:\nPatient did not show up for appointment. {no_show_notes}", appointment_id]
+                )
+                print(f"Appointment {appointment_id} marked as no-show successfully")
+            
+            # Refresh appointment from database
+            appointment.refresh_from_db()
+            
+            # Send no-show notification to the patient
+            try:
+                # Create email notification
+                AppointmentNotification.objects.create(
+                    appointment=appointment,
+                    notification_type='email',
+                    event_type='appointment_no_show',
+                    recipient=appointment.patient,
+                    subject=f"Appointment No-Show - {appointment.appointment_id}",
+                    message=(
+                        f"Dear {appointment.patient.get_full_name()},\n\n"
+                        f"You were marked as no-show for your appointment ({appointment.appointment_id}) "
+                        f"scheduled for {appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p')}.\n\n"
+                        f"Please contact us to reschedule or if this was in error."
+                    ),
+                    template_name='appointment_no_show'
+                )
+                
+                # Create SMS notification if patient has phone number
+                if appointment.patient.phone:
+                    AppointmentNotification.objects.create(
+                        appointment=appointment,
+                        notification_type='sms',
+                        event_type='appointment_no_show',
+                        recipient=appointment.patient,
+                        subject=f"No-Show: {appointment.appointment_id}",
+                        message=(
+                            f"You were marked as no-show for your appointment on {appointment.appointment_date.strftime('%b %d')}. "
+                            f"Please contact us to reschedule."
+                        )
+                    )
+            except Exception as e:
+                print(f"Error sending no-show notifications: {str(e)}")
+                # Continue even if notification fails
             
             return Response({
                 'status': 'success',
-                'message': f'Successfully started consultation for appointment {appointment_id}',
+                'message': f'Appointment {appointment_id} marked as no-show successfully',
                 'appointment': AppointmentListSerializer(appointment).data
             })
-        except DjangoValidationError as e:
-            return Response({
-                'status': 'error',
-                'message': str(e)
-            }, status=status.HTTP_400_BAD_REQUEST)
+            
         except Exception as e:
+            print(f"Error marking appointment as no-show: {str(e)}")
             return Response({
                 'status': 'error',
-                'message': f'Error starting consultation: {str(e)}'
+                'message': f'Error marking appointment as no-show: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+            
     except Exception as e:
         import traceback
-        error_msg = f"Error starting consultation: {str(e)}\n{traceback.format_exc()}"
+        error_msg = f"Error processing no-show: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
         logger.error(error_msg)
         return Response({
             'status': 'error',
             'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_prescription(request, appointment_id):
+    """
+    Create prescriptions for a specific appointment.
+    Only doctors can create prescriptions.
+    """
+    user = request.user
+    print("CREATE PRESCRIPTION request.data:", request.data)
+    
+    try:
+        # Check if user has a doctor profile
+        if not hasattr(user, 'doctor_profile'):
+            return Response({
+                'status': 'error',
+                'message': 'Only doctors can create prescriptions'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        doctor = user.doctor_profile
+        
+        # Find the appointment
+        try:
+            appointment = Appointment.objects.get(appointment_id=appointment_id)
+        except Appointment.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': f'Appointment with ID {appointment_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Check if the doctor is assigned to this appointment
+        if appointment.doctor != doctor:
+            return Response({
+                'status': 'error',
+                'message': 'You can only create prescriptions for appointments assigned to you'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Get medications from request data
+        medications_data = request.data.get('medications', [])
+        if not medications_data:
+            return Response({
+                'status': 'error',
+                'message': 'At least one medication is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate and create medications
+        medications = []
+        for med_data in medications_data:
+            # Required fields validation
+            if not all(key in med_data for key in ['name', 'dosage', 'frequency', 'duration']):
+                return Response({
+                    'status': 'error',
+                    'message': 'Each medication must have name, dosage, frequency, and duration'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create medication
+            medication = Medication.objects.create(
+                appointment=appointment,
+                name=med_data['name'],
+                dosage=med_data['dosage'],
+                frequency=med_data['frequency'],
+                duration=med_data['duration'],
+                instructions=med_data.get('instructions', ''),
+                prescribed_by=doctor,
+                prescribed_date=timezone.now()
+            )
+            medications.append(medication)
+        
+        # Serialize the created medications
+        serializer = MedicationSerializer(medications, many=True)
+        
+        return Response({
+            'status': 'success',
+            'message': f'Successfully created {len(medications)} prescriptions for appointment {appointment_id}',
+            'medications': serializer.data
+        })
+        
+    except Exception as e:
+        import traceback
+        error_msg = f"Error creating prescription: {str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def patient_prescriptions(request, appointment_id=None):
+    """
+    Get prescriptions for a patient.
+    If appointment_id is provided, get prescriptions for that specific appointment.
+    Otherwise, get all prescriptions for the current user.
+    """
+    user = request.user
+    
+    try:
+        if appointment_id:
+            # Get prescriptions for specific appointment
+            try:
+                appointment = Appointment.objects.get(appointment_id=appointment_id)
+            except Appointment.DoesNotExist:
+                return Response({
+                    'status': 'error',
+                    'message': f'Appointment with ID {appointment_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Check if user is the patient or the doctor
+            is_patient = appointment.patient == user
+            is_doctor = hasattr(user, 'doctor_profile') and appointment.doctor == user.doctor_profile
+            
+            if not (is_patient or is_doctor):
+                return Response({
+                    'status': 'error',
+                    'message': 'You can only view prescriptions for your own appointments'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            medications = Medication.objects.filter(appointment=appointment)
+        else:
+            # Get all prescriptions for the current user
+            medications = Medication.objects.filter(
+                appointment__patient=user
+            ).select_related('appointment', 'prescribed_by', 'prescribed_by__user')
+        
+        # Serialize the medications
+        serializer = MedicationSerializer(medications, many=True)
+        
+        return Response({
+            'status': 'success',
+            'medications': serializer.data,
+            'total_count': medications.count()
+        })
+        
+    except Exception as e:
+        import traceback
+        error_msg = f"Error getting prescriptions: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'status': 'error',
+            'message': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def appointment_prescriptions(request, appointment_id):
+    """
+    Get prescriptions for a specific appointment.
+    This is an alias for patient_prescriptions with appointment_id.
+    """
+    return patient_prescriptions(request, appointment_id=appointment_id)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_hospital_departments(request, hospital_id):
+    """
+    Get all departments for the hospital associated with the current user.
+    """
+    try:
+        print('hospital_id', hospital_id)
+        # Get the current user's hospital
+        hospital = Hospital.objects.get(id=hospital_id)
+        
+        # Get all departments for this hospital
+        departments = Department.objects.filter(hospital=hospital)
+        
+        # Serialize the departments
+        serializer = DepartmentSerializer(departments, many=True)
+        
+        return Response(serializer.data)
+        
+    except Exception as e:
+        import traceback
+        error_msg = f"Error retrieving hospital departments: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'error': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+
+@api_view(['GET'])
+def get_doctor_based_on_department(request, department_id):
+    try:
+        # Get the department
+        department = Department.objects.get(id=department_id)
+        
+        # Get all doctors for this department
+        doctors = Doctor.objects.filter(department=department)
+        
+        # Serialize the doctors
+        serializer = DoctorSerializer(doctors, many=True)
+        
+        return Response(serializer.data)
+    except Exception as e:
+        import traceback
+        error_msg = f"Error retrieving doctors for department: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'error': str(e),
             'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

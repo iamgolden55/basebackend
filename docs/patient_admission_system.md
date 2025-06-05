@@ -35,20 +35,319 @@ The Patient Admission System is a comprehensive solution for managing hospital a
 
 ### Regular Patient Admission (Registered Users)
 
-1. **Pre-conditions**: Patient already has an account with a registered hospital
+#### Regular Admission Endpoint
+
+```http
+POST /api/admissions/
+```
+
+#### Regular Admission Headers
+
+```http
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+#### Regular Admission Request
+
+```json
+{
+    "hospital": "number",          // Required - ID of the admitting hospital
+    "department": "number",        // Required - ID of the admitting department
+    "admission_type": "string",   // Required
+                                  // Values: inpatient, observation, day_case, respite
+    "priority": "string",        // Required
+                                  // Values: emergency, urgent, elective
+    "reason_for_admission": "string", // Optional but recommended
+    "patient": "number",         // Required - ID of the registered patient
+    "assign_bed": "boolean"      // Optional (default: false)
+                                  // If true, patient is immediately admitted
+}
+```
+
+#### Regular Admission Response
+
+```json
+{
+    "id": "number",
+    "admission_id": "string",      // Format: ADM-YYMMDD-XXXX
+    "patient": "number",           // Patient ID
+    "patient_name": "string",
+    "hospital": "number",
+    "hospital_name": "string",
+    "department": "number",
+    "department_name": "string",
+    "status": "string",           // pending, admitted, discharged
+    "admission_type": "string",
+    "priority": "string",
+    "reason_for_admission": "string",
+    "is_icu_bed": "boolean",
+    "bed_identifier": "string",
+    "attending_doctor": "number",
+    "attending_doctor_name": "string",
+    "admission_date": "string",    // ISO datetime
+    "expected_discharge_date": "string",
+    "actual_discharge_date": "string",
+    "length_of_stay_days": "number",
+    "current_length_of_stay": "number",
+    "diagnosis": "string",
+    "secondary_diagnoses": "string",
+    "acuity_level": "number",
+    "isolation_required": "boolean",
+    "isolation_type": "string",
+    "discharge_destination": "string",
+    "discharge_summary": "string",
+    "followup_instructions": "string",
+    "insurance_information": "object",
+    "admission_notes": "string",
+    "is_registered_patient": true,
+    "temp_patient_id": null,
+    "temp_patient_details": null,
+    "registration_status": "complete"
+}
+```
+
+#### Regular Admission Errors
+
+```json
+// 400 Bad Request - Invalid Priority
+{
+    "priority": ["\"normal\" is not a valid choice."]
+}
+
+// 400 Bad Request - Invalid Hospital/Department
+{
+    "hospital": ["This field is required."]
+    "department": ["This field is required."]
+}
+
+// 400 Bad Request - Invalid Patient
+{
+    "patient": ["This field is required."]
+}
+
+// 401 Unauthorized
+{
+    "detail": "Authentication credentials were not provided."
+}
+```
+
+#### Regular Admission Flow
+
+1. **Pre-conditions**:
+   - Patient already has an account with a registered hospital
+   - User has valid authentication token
+
 2. **Admission Creation**:
-   - API call to `/admissions/` with patient ID and clinical details
+   - Send POST request to `/api/admissions/` with patient ID and clinical details
    - System validates bed availability in selected department
    - Generates unique admission ID (format: ADM-YYMMDD-XXXX)
+
 3. **Bed Assignment**:
-   - Department's `assign_bed()` method allocates a bed
-   - Occupied bed counter is incremented
+   - If `assign_bed` is true:
+     - Department's `assign_bed()` method allocates a bed
+     - Occupied bed counter is incremented
+     - Status is set to 'admitted'
+   - If `assign_bed` is false:
+     - Status remains 'pending'
+     - Bed can be assigned later
+
 4. **Discharge Process**:
-   - API call to `/admissions/{id}/discharge/` with discharge details
-   - Bed is released back to department's available pool
-   - Clinical documentation is finalized
+
+#### Discharge Endpoint
+
+```http
+POST /api/admissions/{id}/discharge/
+```
+
+#### Discharge Headers
+
+```http
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+#### Discharge Request
+
+```json
+{
+    "discharge_summary": "string",     // Required - Clinical summary of the stay
+    "discharge_destination": "string", // Required - Where patient is going (e.g., home)
+    "followup_instructions": "string", // Optional - Post-discharge care instructions
+    "discharge_medications": []        // Optional - List of discharge medications
+}
+```
+
+#### Discharge Response
+
+```json
+{
+    "message": "Patient discharged successfully",
+    "admission": {
+        // Same fields as admission response, but with:
+        "status": "discharged",
+        "actual_discharge_date": "string",   // ISO datetime
+        "discharge_destination": "string",
+        "discharge_summary": "string",
+        "followup_instructions": "string"
+    }
+}
+```
+
+#### Discharge Errors
+
+```json
+// 400 Bad Request - Patient Not Admitted
+{
+    "error": "['Can only discharge patients who are currently admitted']"
+}
+
+// 400 Bad Request - Missing Required Fields
+{
+    "discharge_summary": ["This field is required."]
+    "discharge_destination": ["This field is required."]
+}
+
+// 404 Not Found
+{
+    "detail": "Not found."
+}
+
+// 401 Unauthorized
+{
+    "detail": "Authentication credentials were not provided."
+}
+```
+
+#### Process Details
+
+- API call to `/api/admissions/{id}/discharge/` with discharge details
+- System validates patient is currently admitted
+- Updates admission status to 'discharged'
+- Records discharge time and documentation
+- Releases bed back to department's available pool
+- Clinical documentation is finalized
 
 ### Emergency Admission (Unregistered Patients)
+
+#### API Endpoint
+
+```http
+POST /api/admissions/emergency_admission/
+```
+
+#### Request Headers
+
+```http
+Authorization: Bearer <access_token>
+Content-Type: application/json
+```
+
+#### Request Body
+
+```json
+{
+    "temp_patient_details": {
+        "first_name": "string",        // Required
+        "last_name": "string",         // Required
+        "gender": "string",            // Required (M/F/O)
+        "phone_number": "string",      // Required
+        "city": "string",             // Required
+        "emergency_contact": "string", // Required
+        "emergency_contact_name": "string", // Required
+        "chief_complaint": "string",  // Required
+        "allergies": "string",        // Required
+        "date_of_birth": "YYYY-MM-DD", // Either date_of_birth or age is required
+        "age": "number",              // Optional if date_of_birth provided
+        "hpn": "string"              // Optional
+    },
+    "hospital_id": "number",          // Required - ID of the admitting hospital
+    "department_id": "number",        // Required - ID of the admitting department
+    "admission_type": "string",       // Optional (default: emergency)
+                                      // Values: emergency, inpatient, outpatient
+    "priority": "string",            // Optional (default: urgent)
+                                      // Values: emergency, urgent, normal
+    "reason_for_admission": "string", // Optional but recommended
+    "is_registered_patient": false,    // Must be false for emergency admissions
+    "assign_bed": "boolean"          // Optional (default: false)
+                                      // If true, patient is immediately admitted
+}
+```
+
+#### Success Response
+
+```json
+{
+    "message": "Emergency admission created successfully",
+    "admission": {
+        "id": "number",
+        "admission_id": "string",      // Format: ADM-YYMMDD-XXXX
+        "patient": null,               // Null for emergency admissions
+        "patient_name": "string",
+        "hospital": "number",
+        "hospital_name": "string",
+        "department": "number",
+        "department_name": "string",
+        "status": "string",           // pending, admitted, discharged
+        "admission_type": "string",
+        "priority": "string",
+        "reason_for_admission": "string",
+        "is_icu_bed": "boolean",
+        "bed_identifier": "string",
+        "attending_doctor": "number",
+        "attending_doctor_name": "string",
+        "admission_date": "string",    // ISO datetime
+        "expected_discharge_date": "string",
+        "actual_discharge_date": "string",
+        "length_of_stay_days": "number",
+        "current_length_of_stay": "number",
+        "diagnosis": "string",
+        "secondary_diagnoses": "string",
+        "acuity_level": "number",
+        "isolation_required": "boolean",
+        "isolation_type": "string",
+        "discharge_destination": "string",
+        "discharge_summary": "string",
+        "followup_instructions": "string",
+        "insurance_information": "object",
+        "admission_notes": "string",
+        "is_registered_patient": false,
+        "temp_patient_id": "string",    // Format: TEMP-YYMMDD-XXXX
+        "temp_patient_details": "object",
+        "registration_status": "string" // pending, completed
+    }
+}
+```
+
+#### Error Responses
+
+```json
+// 400 Bad Request - Missing Required Fields
+{
+    "error": "Missing required personal information: first_name, last_name"
+}
+
+// 400 Bad Request - Missing Medical Information
+{
+    "error": "Missing required medical information: chief_complaint, allergies"
+}
+
+// 400 Bad Request - Missing Age Information
+{
+    "error": "Either age or date_of_birth must be provided"
+}
+
+// 400 Bad Request - Invalid Hospital/Department
+{
+    "hospital": ["This field is required."]
+    "department": ["This field is required."]
+}
+
+// 401 Unauthorized
+{
+    "detail": "Authentication credentials were not provided."
+}
+```
 
 1. **Initial Intake**:
    - API call to `/admissions/emergency_admission/` with temporary patient details

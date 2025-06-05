@@ -178,8 +178,8 @@ class PatientAdmissionViewSet(viewsets.ModelViewSet):
         # Create admission data
         admission_data = {
             'admission_id': generate_admission_id(),
-            'hospital_id': request.data.get('hospital_id'),
-            'department_id': request.data.get('department_id'),
+            'hospital': request.data.get('hospital_id'),  # Use hospital instead of hospital_id
+            'department': request.data.get('department_id'),  # Use department instead of department_id
             'status': 'pending',
             'admission_type': request.data.get('admission_type', 'emergency'),
             'priority': request.data.get('priority', 'urgent'),

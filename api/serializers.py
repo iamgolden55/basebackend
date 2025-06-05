@@ -1233,7 +1233,35 @@ class PatientAdmissionSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = PatientAdmission
-        fields = '__all__'
+        fields = [
+            'id', 'admission_id', 'patient', 'patient_name',
+            'hospital', 'hospital_name',
+            'department', 'department_name',
+            'status', 'admission_type', 'priority',
+            'reason_for_admission', 'is_icu_bed', 'bed_identifier',
+            'attending_doctor', 'attending_doctor_name',
+            'admission_date', 'expected_discharge_date',
+            'actual_discharge_date', 'length_of_stay_days',
+            'current_length_of_stay', 'diagnosis', 'secondary_diagnoses',
+            'acuity_level', 'isolation_required', 'isolation_type',
+            'discharge_destination', 'discharge_summary',
+            'followup_instructions', 'insurance_information',
+            'admission_notes', 'is_registered_patient',
+            'temp_patient_id', 'temp_patient_details',
+            'registration_status'
+        ]
+        read_only_fields = ['id', 'admission_id', 'length_of_stay_days']
+        
+    def to_internal_value(self, data):
+        print(f"Incoming data: {data}")
+        # Map hospital_id to hospital and department_id to department
+        if 'hospital_id' in data:
+            data['hospital'] = data.pop('hospital_id')
+        if 'department_id' in data:
+            data['department'] = data.pop('department_id')
+        result = super().to_internal_value(data)
+        print(f"After internal value: {result}")
+        return result
     
     def get_patient_name(self, obj):
         # Handle both registered patients and emergency admissions
@@ -1257,6 +1285,12 @@ class PatientAdmissionSerializer(serializers.ModelSerializer):
     
     def get_current_length_of_stay(self, obj):
         return obj.current_length_of_stay
+        
+    def to_internal_value(self, data):
+        print(f"Incoming data: {data}")
+        result = super().to_internal_value(data)
+        print(f"After internal value: {result}")
+        return result
 
 class PatientTransferSerializer(serializers.Serializer):
     """Serializer for transferring patients"""

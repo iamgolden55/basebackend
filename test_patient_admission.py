@@ -79,21 +79,24 @@ def create_test_admission():
         admission = existing_admission
     else:
         # Create a new admission
+        # Create admission using the model fields as expected by serializer
         admission = PatientAdmission.objects.create(
             admission_id=generate_admission_id(),
             patient=patient,
-            hospital=hospital,
-            department=department,
+            hospital=hospital,  # serializer maps hospital_id to this
+            department=department,  # serializer maps department_id to this
             status='pending',
             admission_type='inpatient',
-            priority='elective',
+            priority='elective',  # must be one of: emergency, urgent, elective
             reason_for_admission="Abdominal pain and fever",
             is_icu_bed=False,
             bed_identifier=f"Room {department.floor_number}01-A",
             attending_doctor=doctor,
             expected_discharge_date=timezone.now() + timedelta(days=3),
             diagnosis="Suspected appendicitis",
-            acuity_level=3
+            acuity_level=3,
+            is_registered_patient=True,
+            registration_status='complete'
         )
         print(f"Created new admission: {admission.admission_id} (Status: {admission.status})")
     
