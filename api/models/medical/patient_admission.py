@@ -307,7 +307,10 @@ class PatientAdmission(TimestampedModel):
             
         # Handle bed assignment/release based on status changes
         if self._state.adding:  # New admission
-            if self.status == 'admitted':
+            if getattr(self, '_assign_bed_on_create', False):
+                self.status = 'admitted'
+                self._assign_bed()
+            elif self.status == 'admitted':
                 self._assign_bed()
         else:
             original = PatientAdmission.objects.get(pk=self.pk)
@@ -346,6 +349,7 @@ class PatientAdmission(TimestampedModel):
         if self.status != 'pending':
             raise ValidationError("Can only admit patients with pending status")
         self.status = 'admitted'
+        self._assign_bed()
         self.save()
         return True
     

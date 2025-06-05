@@ -22,7 +22,7 @@ from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from api.models import (
-    Hospital, HospitalRegistration, CustomUser, Appointment, Doctor
+    Hospital, HospitalRegistration, CustomUser, Appointment, Doctor, HospitalAdmin
 )
 from api.models.medical.appointment_notification import AppointmentNotification
 from api.models.medical.department import Department
@@ -96,9 +96,9 @@ class UserHospitalRegistrationsView(generics.ListAPIView):
         
         if user.role == 'hospital_admin':
             # For hospital admins: show all registrations for their hospital
-            # FIX: Get the hospital where this user is the admin
-            admin_hospital = Hospital.objects.filter(user=user).first()
-            if admin_hospital:
+            # FIX: Get the hospital where this user is the admin using the correct relationship
+            try:
+                admin_hospital = user.hospital_admin_profile.hospital
                 queryset = HospitalRegistration.objects.filter(
                     hospital=admin_hospital
                 ).select_related('user', 'hospital')
@@ -108,8 +108,8 @@ class UserHospitalRegistrationsView(generics.ListAPIView):
                     queryset = queryset.filter(status=status_filter)
                     
                 return queryset
-            else:
-                # If admin is not linked to any hospital, return empty queryset
+            except (AttributeError, HospitalAdmin.DoesNotExist):
+                # If admin is not properly linked to any hospital, return empty queryset
                 return HospitalRegistration.objects.none()
         else:
             # For regular users: show their own registrations

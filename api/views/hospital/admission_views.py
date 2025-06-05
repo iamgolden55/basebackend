@@ -29,6 +29,7 @@ class PatientAdmissionViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     queryset = PatientAdmission.objects.all()
     serializer_class = PatientAdmissionSerializer
+    lookup_field = 'admission_id'
     
     def get_queryset(self):
         user = self.request.user
@@ -56,7 +57,7 @@ class PatientAdmissionViewSet(viewsets.ModelViewSet):
         return PatientAdmissionSerializer
     
     @action(detail=True, methods=['post'])
-    def admit(self, request, pk=None):
+    def admit(self, request, admission_id=None):
         """Admit a pending patient"""
         admission = self.get_object()
         

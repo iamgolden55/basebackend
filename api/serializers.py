@@ -1259,7 +1259,15 @@ class PatientAdmissionSerializer(serializers.ModelSerializer):
             data['hospital'] = data.pop('hospital_id')
         if 'department_id' in data:
             data['department'] = data.pop('department_id')
+            
+        # Handle assign_bed flag
+        assign_bed = data.pop('assign_bed', False)
         result = super().to_internal_value(data)
+        
+        # Set flag for model to handle in save()
+        if assign_bed:
+            result._assign_bed_on_create = True
+            
         print(f"After internal value: {result}")
         return result
     
