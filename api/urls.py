@@ -69,6 +69,9 @@ from api.views.hospital.admission_views import PatientAdmissionViewSet
 # Patient search views
 from api.views.hospital.patient_views import search_patients
 
+# Doctor views  
+from api.views.medical_staff.doctor_views import DoctorListView
+
 # Notification views
 from api.views.utils.notification_views import InAppNotificationViewSet
 
@@ -233,6 +236,9 @@ urlpatterns = [
     
     # Patient search endpoint
     path('patients/search/', search_patients, name='patient-search'),
+    
+    # Doctors endpoint
+    path('doctors/', DoctorListView.as_view(), name='doctor-list'),
     
     # Appointment notes endpoint
     path('appointments/<str:appointment_id>/notes/', get_appointment_notes, name='get-appointment-notes'),
