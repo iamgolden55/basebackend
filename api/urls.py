@@ -56,7 +56,8 @@ from api.views.hospital.hospital_views import (
     appointment_prescriptions,
     get_appointment_notes,
     edit_appointment_notes,
-    delete_appointment_notes
+    delete_appointment_notes,
+    get_departments_for_doctor
 )
 
 # Medical views
@@ -231,6 +232,14 @@ urlpatterns = [
     path('appointments/<str:appointment_id>/notes/', get_appointment_notes, name='get-appointment-notes'),
     path('appointments/<str:appointment_id>/notes/edit/', edit_appointment_notes, name='edit-appointment-notes'),
     path('appointments/<str:appointment_id>/notes/delete/', delete_appointment_notes, name='delete-appointment-notes'),
+
+    # Appointment refer endpoint
+    path('api/appointments/<int:pk>/refer/', 
+         AppointmentViewSet.as_view({'post': 'refer'}), 
+         name='appointment-refer'),
+    
+    # Department endpoints
+    path('departments/<str:hospital_id>/', get_departments_for_doctor, name='get-departments-for-doctor'),
 ]
 
 # Available endpoints:
@@ -247,7 +256,7 @@ urlpatterns = [
 # POST /api/appointments/<id>/cancel/ - Cancel an appointment
 # POST /api/appointments/<id>/reschedule/ - Reschedule an appointment
 # POST /api/appointments/<id>/approve/ - Approve an appointment
-# POST /api/appointments/<id>/refer/ - Refer an appointment to another hospital
+#  POST /api/appointments/<id>/refer/ - Refer an appointment to another hospital
 # POST /api/appointments/<id>/complete/ - Mark an appointment as completed
 # GET /api/appointments/upcoming/ - Get upcoming appointments
 # GET /api/appointments/today/ - Get today's appointments

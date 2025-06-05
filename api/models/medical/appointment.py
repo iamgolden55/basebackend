@@ -5,6 +5,8 @@ from django.contrib.auth import get_user_model
 from ..base import TimestampedModel
 from .appointment_notification import AppointmentNotification
 from ..medical_staff.doctor import Doctor
+import logging
+logger = logging.getLogger(__name__)
 
 class Appointment(TimestampedModel):
     """
@@ -158,8 +160,22 @@ class Appointment(TimestampedModel):
         on_delete=models.SET_NULL,
         related_name='referred_appointments'
     )
+    referred_to_department = models.ForeignKey(
+    'Department',
+    null=True,
+    blank=True,
+    on_delete=models.SET_NULL,
+    related_name='referred_appointments'
+)
     referral_reason = models.TextField(null=True, blank=True)
     referral_date = models.DateTimeField(null=True, blank=True)
+    referred_from = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='referred_to'
+    )
     
     # Additional Information
     notes = models.TextField(
@@ -376,11 +392,15 @@ class Appointment(TimestampedModel):
     def _is_valid_status_transition(self, old_status, new_status):
         """Check if status transition is valid"""
         valid_transitions = {
-            'pending': ['confirmed', 'cancelled'],  # Initial state - can be confirmed or cancelled
-            'confirmed': ['in_progress', 'cancelled', 'pending'],  # Can go back to pending if doctor cancels
-            'in_progress': ['completed', 'pending'],  # Can go back to pending if doctor can't complete
-            'completed': [],  # Final state - no further transitions
-            'cancelled': []  # Final state - no further transitions
+            'pending': ['confirmed', 'cancelled', 'rejected', 'referred'],
+            'confirmed': ['in_progress', 'cancelled', 'no_show', 'referred'],
+            'in_progress': ['completed', 'cancelled', 'referred'],
+            'completed': [],
+            'cancelled': [],
+            'no_show': [],
+            'rejected': [],
+            'referred': [],
+            'rescheduled': ['confirmed', 'cancelled']
         }
         return new_status in valid_transitions.get(old_status, [])
 
@@ -491,53 +511,102 @@ class Appointment(TimestampedModel):
             template_name='appointment_status_update'
         )
 
-    def refer(self, target_hospital, reason, referred_by):
-        """Refer the appointment to another hospital"""
-        if not referred_by.has_perm('api.can_refer_appointments'):
+    def refer(self, target_hospital=None, target_department=None, reason=None, referred_by=None):
+        print(f"\n=== REFERRAL DEBUG ===")
+        print(f"Original Appointment ID: {self.id}")
+        print(f"Requested By User: {referred_by} (Staff: {referred_by.is_staff}, Doctor: {hasattr(referred_by, 'doctor_profile')})")
+        print(f"Target Hospital: {target_hospital.id if target_hospital else 'Same Hospital'}")
+        print(f"Target Department: {target_department.id if target_department else 'Not Specified'}")
+        print(f"Current Status: {self.status}")
+        
+        is_doctor = hasattr(referred_by, 'doctor_profile')
+        if not (referred_by.has_perm('api.can_refer_appointments') or 
+                referred_by.is_staff or 
+                is_doctor):
             raise ValidationError("User does not have permission to refer appointments")
-            
-        self.status = 'referred'
-        self.referred_to_hospital = target_hospital
-        self.referral_reason = reason
-        self.referral_date = timezone.now()
-        self.save()
-        
-        # Get target doctor from the same department at target hospital
-        target_doctor = Doctor.objects.filter(
-            hospital=target_hospital,
-            department__name=self.department.name,
-            is_active=True
-        ).first()
-        
-        if not target_doctor:
-            raise ValidationError("No active doctor found in the target department at the referred hospital")
-        
-        # Set appointment date to next available slot
-        next_day = timezone.now() + timezone.timedelta(days=1)
-        appointment_date = next_day.replace(
-            hour=target_doctor.consultation_hours_start.hour,
-            minute=target_doctor.consultation_hours_start.minute,
-            second=0,
-            microsecond=0
+
+        if not target_hospital and not target_department:
+            raise ValidationError("Either target_hospital or target_department must be specified")
+
+        logger.debug(
+            f"Referral processing - Original: {self.id}, "
+            f"Target Hospital: {target_hospital.id if target_hospital else 'Same'}, "
+            f"Target Dept: {target_department.id if target_department else 'Same'}, User Permissions: "
+            f"{referred_by.has_perm('api.can_refer_appointments')}"
         )
+
+        # Only update status if not already referred
+        if self.status != 'referred':
+            self.status = 'referred'
+            self.referral_reason = reason
+            self.referral_date = timezone.now()
+        else:
+            print("Appointment already referred - Skipping status update")
         
-        # Create new appointment at target hospital - don't require fee
+        if target_hospital:
+            self.referred_to_hospital = target_hospital
+        if target_department:
+            self.referred_to_department = target_department
+        
+        self.save()
+
+        # For inter-hospital referrals (existing behavior)
+        if target_hospital:
+            target_doctor = Doctor.objects.filter(
+                hospital=target_hospital,
+                department__name=self.department.name,
+                is_active=True
+            ).first()
+            
+            if not target_doctor:
+                raise ValidationError("No active doctor found in the target department at the referred hospital")
+            
+            next_day = timezone.now() + timezone.timedelta(days=1)
+            appointment_date = next_day.replace(
+                hour=target_doctor.consultation_hours_start.hour,
+                minute=target_doctor.consultation_hours_start.minute,
+                second=0,
+                microsecond=0
+            )
+            
+            department = target_doctor.department
+        else:  # Intra-hospital department referral
+            department = target_department
+            appointment_date = timezone.now() + timezone.timedelta(days=1)  # Default next day
+        
+        # Create new appointment
         new_appointment = Appointment.objects.create(
             patient=self.patient,
-            hospital=target_hospital,
-            department=target_doctor.department,
-            doctor=target_doctor,
+            hospital=target_hospital if target_hospital else self.hospital,
+            department=target_department,  # Using target department
+            doctor=None,
             appointment_type=self.appointment_type,
             priority=self.priority,
             chief_complaint=self.chief_complaint,
+            symptoms=self.symptoms,
+            symptoms_data=self.symptoms_data or [],
             medical_history=self.medical_history,
+            allergies=self.allergies,
+            current_medications=self.current_medications,
             appointment_date=appointment_date,
-            # fee=self.fee,  # Remove fee reference
-            payment_required=False,
-            payment_status='waived',
-            status='pending'
+            duration=self.duration,
+            status='pending',
+            referred_from=self
         )
         
+        print(f"\n=== NEW APPOINTMENT CREATED ===")
+        print(f"New Appointment ID: {new_appointment.id}")
+        print(f"Patient: {new_appointment.patient} (ID: {new_appointment.patient_id})")
+        print(f"Scheduled Date: {new_appointment.appointment_date}")
+        print(f"Status: {new_appointment.status}")
+        print(f"Referred From: {self.id}\n")
+
+        logger.debug(
+            f"New referral appointment created - ID: {new_appointment.id}, "
+            f"Patient: {new_appointment.patient_id}, "
+            f"Date: {new_appointment.appointment_date}"
+        )
+
         # Send referral notifications
         AppointmentNotification.objects.create(
             appointment=self,
@@ -547,7 +616,7 @@ class Appointment(TimestampedModel):
             subject=f"Appointment Referral - {self.appointment_id}",
             message=(
                 f"Dear {self.patient.get_full_name()},\n\n"
-                f"Your appointment has been referred to {target_hospital.name}.\n"
+                f"Your appointment has been referred to {target_hospital.name if target_hospital else target_department.name} department.\n"
                 f"Reason for referral: {reason}\n\n"
                 f"New appointment details will be sent shortly."
             ),

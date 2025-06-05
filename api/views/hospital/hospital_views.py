@@ -19,7 +19,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework.decorators import api_view, permission_classes, action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from api.models import (
     Hospital, HospitalRegistration, CustomUser, Appointment, Doctor
@@ -35,7 +35,7 @@ from api.serializers import (
     HospitalAdminRegistrationSerializer, ExistingUserToAdminSerializer,
     AppointmentCancelSerializer, AppointmentRescheduleSerializer,
     AppointmentApproveSerializer, AppointmentReferSerializer,
-    MedicationSerializer, PrescriptionSerializer
+    MedicationSerializer, PrescriptionSerializer, DepartmentSerializer
 )
 from api.utils.location_utils import get_location_from_ip
 
@@ -838,6 +838,39 @@ class AppointmentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    @action(detail=True, methods=['post'])
+    def refer(self, request, pk=None):
+        """
+        Handle appointment referrals (both inter-hospital and intra-hospital)
+        """
+        appointment = self.get_object()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        logger.debug(
+            f"Referral initiated - Appointment: {appointment.id}, "
+            f"User: {request.user}, Data: {request.data}"
+        )
+        try:
+            new_appointment = appointment.refer(
+                target_hospital=serializer.validated_data.get('referred_to_hospital', appointment.hospital),
+                target_department=serializer.validated_data['referred_to_department'],
+                reason=serializer.validated_data['referral_reason'],
+                referred_by=request.user
+            )
+            logger.debug(
+                f"Referral successful - New appointment: {new_appointment.id}, "
+                f"From: {appointment.id}, Status: {new_appointment.status}"
+            )
+            return Response({
+                'status': 'success',
+                'message': 'Appointment referred successfully',
+                'new_appointment_id': new_appointment.id
+            }, status=status.HTTP_200_OK)
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+            
 class HospitalLocationViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet for location-based hospital search and registration.
@@ -2836,6 +2869,29 @@ def delete_appointment_notes(request, appointment_id):
         
     except Exception as e:
         logger.error(f"Error deleting appointment notes: {str(e)}")
+        return Response({
+            'status': 'error',
+            'message': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_departments_for_doctor(request, hospital_id):
+    hospital = Hospital.objects.get(id=hospital_id)
+    try:
+        if not hospital:
+            return Response({
+                'status': 'error',
+                'message': 'Hospital not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+            
+        departments = Department.objects.filter(hospital=hospital)
+        return Response({
+            'status': 'success',
+            'departments': DepartmentSerializer(departments, many=True).data
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        logger.error(f"Error getting departments for doctor: {str(e)}")
         return Response({
             'status': 'error',
             'message': str(e)

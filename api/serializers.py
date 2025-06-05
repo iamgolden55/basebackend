@@ -5,6 +5,7 @@ from api.utils.token_utils import build_user_token_data
 from api.models.medical.hospital_registration import HospitalRegistration
 from api.models import Hospital
 from api.models.medical.hospital_auth import HospitalAdmin
+from api.models import Department
 from .tokens import HospitalAdminToken
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -953,12 +954,27 @@ class AppointmentRescheduleSerializer(serializers.Serializer):
 class AppointmentApproveSerializer(serializers.Serializer):
     approval_notes = serializers.CharField(required=False, allow_blank=True)
 
-class AppointmentReferSerializer(serializers.Serializer):
+class AppointmentReferSerializer(serializers.ModelSerializer):
     referred_to_hospital = serializers.PrimaryKeyRelatedField(
         queryset=Hospital.objects.all(),
-        required=True
+        required=False
     )
-    referral_reason = serializers.CharField(required=True)     
+    referred_to_department = serializers.PrimaryKeyRelatedField(
+        queryset=Department.objects.all(),
+        required=False
+    )
+    referral_reason = serializers.CharField(required=True)
+
+    class Meta:
+        model = Appointment
+        fields = ['referred_to_hospital', 'referred_to_department', 'referral_reason']
+
+    def validate(self, data):
+        if not data.get('referred_to_hospital') and not data.get('referred_to_department'):
+            raise serializers.ValidationError(
+                "Either referred_to_hospital or referred_to_department must be specified"
+            )
+        return data
 
 class PatientMedicalRecordSerializer(serializers.ModelSerializer):
     """
@@ -1254,3 +1270,37 @@ class PatientDischargeSerializer(serializers.Serializer):
     discharge_destination = serializers.CharField(required=False, allow_blank=True)
     discharge_summary = serializers.CharField(required=False, allow_blank=True)
     followup_instructions = serializers.CharField(required=False, allow_blank=True)
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    hospital_name = serializers.CharField(source='hospital.name', read_only=True)
+    doctor_count = serializers.SerializerMethodField()
+    is_active = serializers.BooleanField(default=True)
+
+    class Meta:
+        model = Department
+        fields = [
+            'id',
+            'name',
+            'description',
+            'hospital',
+            'hospital_name',
+            'created_at',
+            'updated_at',
+            'is_active',
+            'doctor_count',
+            # Add any other department fields
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'hospital_name', 'doctor_count']
+        extra_kwargs = {
+            'hospital': {'write_only': True}  # Hospital is write-only since we show hospital_name
+        }
+
+    def get_doctor_count(self, obj):
+        """Get count of doctors in this department"""
+        return obj.doctors.count() if hasattr(obj, 'doctors') else 0
+
+    def validate_name(self, value):
+        """Ensure department name is properly formatted"""
+        return value.strip().title()
+        
