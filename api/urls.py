@@ -73,6 +73,7 @@ from api.views.hospital.patient_views import search_patients
 
 # Doctor views  
 from api.views.medical_staff.doctor_views import DoctorListView
+from api.views.medical_staff.staff_views import StaffManagementView
 
 # Notification views
 from api.views.utils.notification_views import InAppNotificationViewSet
@@ -91,6 +92,12 @@ router.register(r'admissions', PatientAdmissionViewSet, basename='admission')
 @api_view(['GET'])
 def health_check(request):
     return Response({"status": "healthy"})
+
+# Staff management endpoints
+staff_patterns = [
+    path('staff/', StaffManagementView.as_view(), name='staff-management'),
+]
+
 
 urlpatterns = [
     # ============= HOSPITAL REGISTRATION ENDPOINTS =============
@@ -122,6 +129,10 @@ urlpatterns = [
          SetPrimaryHospitalView.as_view(), 
          name='set-primary-hospital'),
     
+    # Department endpoints
+    path('hospitals/departments/', 
+         departments,
+         name='hospital-departments'),
     # Hospital admin registration endpoint -- This is the endpoint for the users to register as a hospital admin.
     # Can convert existing users to admins using existing_user=True and user_email parameters
     path('hospitals/admin/register/', 
@@ -251,6 +262,9 @@ urlpatterns = [
 
     # Get doctors based on department
     path('doctors/department/<str:department_id>', get_doctor_based_on_department, name='doctor-based-on-department'),
+
+    # Staff management endpoints
+    path('', include(staff_patterns)),
 ]
 
 # Available endpoints:

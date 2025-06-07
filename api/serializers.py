@@ -1163,7 +1163,93 @@ class Hospital2FAVerificationSerializer(serializers.Serializer):
     remember_device = serializers.BooleanField(default=False)
 
 
+# Staff Management Serializers
+class StaffSerializer(serializers.ModelSerializer):
+    """Serializer for hospital staff members"""
+    full_name = serializers.SerializerMethodField()
+    role_display = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+    is_available = serializers.SerializerMethodField()
+    availability_status = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = get_user_model()
+        fields = [
+            'id', 'email', 'full_name', 'role', 'role_display',
+            'department_name', 'is_available', 'availability_status',
+            'phone', 'last_login', 'date_joined'
+        ]
+        read_only_fields = ['id', 'email', 'last_login', 'date_joined']
+        
+    def get_full_name(self, obj):
+        """Get user's full name"""
+        return f"{obj.first_name} {obj.last_name}" if obj.first_name and obj.last_name else obj.email
+    
+    def get_role_display(self, obj):
+        """Get display name for role"""
+        return obj.get_role_display()
+    
+    def get_department_name(self, obj):
+        """Get department name if user is a doctor"""
+        if hasattr(obj, 'doctor_profile') and obj.doctor_profile.department:
+            return obj.doctor_profile.department.name
+        return None
+    
+    def get_is_available(self, obj):
+        """Check if staff member is currently available"""
+        # For doctors, check their availability flag
+        if hasattr(obj, 'doctor_profile'):
+            return obj.doctor_profile.available_for_appointments
+        # For other staff, check their active status
+        return obj.is_active
+    
+    def get_availability_status(self, obj):
+        """Get detailed availability status"""
+        if hasattr(obj, 'doctor_profile'):
+            return {
+                'is_available': obj.doctor_profile.available_for_appointments,
+                'consultation_hours_start': obj.doctor_profile.consultation_hours_start,
+                'consultation_hours_end': obj.doctor_profile.consultation_hours_end,
+                'next_available_slot': self._get_next_available_slot(obj),
+                'is_active': True if datetime.now().strftime('%H:%M') >= obj.doctor_profile.consultation_hours_start.strftime('%H:%M') and datetime.now().strftime('%H:%M') <= obj.doctor_profile.consultation_hours_end.strftime('%H:%M') else False
+            }
+        return {
+            'is_available': obj.is_active,
+            'is_active': True,
+            'next_available_slot': None
+        }
+    
+    def _get_next_available_slot(self, obj):
+        """Get next available time slot for doctor"""
+        if not hasattr(obj, 'doctor_profile'):
+            return None
+            
+        try:
+            from datetime import datetime, timedelta
+            from django.utils import timezone
+            
+            # Get current time
+            now = timezone.now()
+            
+            # Get doctor's consultation hours
+            start = obj.doctor_profile.consultation_hours_start
+            end = obj.doctor_profile.consultation_hours_end
+            
+            # Calculate next available slot
+            if now.time() < start:
+                return datetime.combine(now.date(), start)
+            elif now.time() < end:
+                return datetime.combine(now.date(), end)
+            else:
+                return datetime.combine(now.date() + timedelta(days=1), start)
+                
+        except Exception as e:
+            print(f"Error calculating next slot: {e}")
+            return None
+
+
 # Patient Admission System Serializers
+
 
 class PatientAdmissionListSerializer(serializers.ModelSerializer):
     """Serializer for listing patient admissions"""
