@@ -59,7 +59,9 @@ from api.views.hospital.hospital_views import (
     delete_appointment_notes,
     get_departments_for_doctor,
     get_hospital_departments,
-    get_doctor_based_on_department
+    get_doctor_based_on_department,
+    create_department,
+    hospital_appointments
 )
 
 # Medical views
@@ -169,6 +171,9 @@ urlpatterns = [
          pending_hospital_registrations, 
          name='pending-hospital-registrations'),
     
+    # Hospital appointments endpoint for admins
+    path('hospitals/appointments/', hospital_appointments, name='hospital-appointments'),
+
     # Now include router URLs - hospital router will handle /api/hospitals/<id>/ patterns
     path('', include(router.urls)),
     path('profile/', UserProfileUpdateView.as_view(), name='profile-update'),
@@ -263,8 +268,14 @@ urlpatterns = [
     # Get doctors based on department
     path('doctors/department/<str:department_id>', get_doctor_based_on_department, name='doctor-based-on-department'),
 
+    # Hospital appointments endpoint for admins
+    path('hospitals/appointments/', hospital_appointments, name='hospital-appointments'),
+
     # Staff management endpoints
     path('', include(staff_patterns)),
+
+    # Create department endpoint
+    path('hospitals/departments/create/', create_department, name='create-department'),
 ]
 
 # Available endpoints:
