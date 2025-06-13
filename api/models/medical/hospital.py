@@ -171,9 +171,13 @@ class Hospital(models.Model):
 
     def get_all_staff(self):
         """
-        Get all staff members in the hospital.
+        Get all staff members in the hospital (excluding patients).
         """
-        return get_user_model().objects.filter(primary_hospital=self)
+        return get_user_model().objects.filter(
+            hospital_registrations__hospital=self,
+            hospital_registrations__status='approved',
+            role__in=['doctor', 'nurse', 'staff', 'hospital_admin']
+        ).distinct()
     
     def create_department(self, name, code, **department_details):
         """

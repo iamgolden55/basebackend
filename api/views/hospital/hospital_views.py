@@ -37,6 +37,7 @@ from api.serializers import (
     AppointmentApproveSerializer, AppointmentReferSerializer,
     MedicationSerializer, PrescriptionSerializer, DepartmentSerializer, DoctorSerializer
 )
+from api.models.medical.appointment import Appointment
 from api.utils.location_utils import get_location_from_ip
 
 # Logger setup
@@ -3141,22 +3142,161 @@ def delete_appointment_notes(request, appointment_id):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_departments_for_doctor(request, hospital_id):
-    hospital = Hospital.objects.get(id=hospital_id)
+    """
+    Get departments that the doctor is eligible to work in based on their specialty
+    """
+    user = request.user
+    if not hasattr(user, 'doctor_profile'):
+        return Response({
+            'status': 'error',
+            'message': 'Only doctors can access this endpoint'
+        }, status=status.HTTP_403_FORBIDDEN)
+
     try:
+        hospital = Hospital.objects.get(id=hospital_id)
+        departments = Department.objects.filter(
+            hospital=hospital,
+        )
+        
+        return Response({
+            'status': 'success',
+            'departments': DepartmentSerializer(departments, many=True).data
+        })
+    except Hospital.DoesNotExist:
+        return Response({
+            'status': 'error',
+            'message': 'Hospital not found'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def hospital_appointments(request):
+    """
+    Get all appointments for the hospital associated with the current admin user
+    """
+    print("DEBUG: hospital_appointments view called")
+    print(f"DEBUG: Request user: {request.user}")
+    print(f"DEBUG: User has hospital_admin_profile: {hasattr(request.user, 'hospital_admin_profile')}")
+    
+    user = request.user
+    if not hasattr(user, 'hospital_admin_profile'):
+        print("DEBUG: User is not a hospital admin")
+        return Response({
+            'status': 'error',
+            'message': 'Only hospital admins can access this endpoint'
+        }, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        hospital = user.hospital_admin_profile.hospital
+        
+        # Get all appointments for this hospital
+        appointments = Appointment.objects.filter(hospital=hospital)
+        
+        # Apply optional filters from query parameters
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            appointments = appointments.filter(status=status_filter)
+            
+        department_id = request.query_params.get('department_id')
+        if department_id:
+            appointments = appointments.filter(department_id=department_id)
+            
+        doctor_id = request.query_params.get('doctor_id')
+        if doctor_id:
+            appointments = appointments.filter(doctor_id=doctor_id)
+            
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+        if date_from:
+            appointments = appointments.filter(appointment_date__gte=date_from)
+        if date_to:
+            appointments = appointments.filter(appointment_date__lte=date_to)
+            
+        # Sort by appointment date by default
+        appointments = appointments.order_by('appointment_date')
+        
+        serializer = AppointmentListSerializer(appointments, many=True)
+        
+        return Response({
+            'status': 'success',
+            'appointments': serializer.data,
+            'total_count': appointments.count()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error fetching hospital appointments: {str(e)}")
+        return Response({
+            'status': 'error',
+            'message': 'Error fetching appointments'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+def create_department(request):
+    try:
+        hospital_id = request.data.get('hospital')
+        if not hospital_id:
+            return Response({
+                'status': 'error',
+                'message': 'Hospital ID is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        hospital = Hospital.objects.get(id=hospital_id)
+        user = request.user
         if not hospital:
             return Response({
                 'status': 'error',
                 'message': 'Hospital not found'
             }, status=status.HTTP_404_NOT_FOUND)
             
-        departments = Department.objects.filter(hospital=hospital)
+        if user.role != 'hospital_admin':
+            return Response({
+                'status': 'error',
+                'message': 'You do not have permission to create a department'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Set minimum_staff_required to 0 for new departments
+        minimum_staff_required = request.data.get('minimum_staff_required', 0)
+        print('minimum_staff_required', minimum_staff_required)
+        print('request.data', request.data)
+        department = Department.objects.create(
+            hospital=hospital,
+            name=request.data.get('name'),
+            code=request.data.get('code'),
+            department_type=request.data.get('department_type', 'General'),
+            description=request.data.get('description', 'No description provided'),
+            is_active=request.data.get('is_active', True),
+            floor_number=request.data.get('floor_number','1'),
+            wing=request.data.get('wing', 'south'),
+            emergency_contact=request.data.get('emergency_contact', '08012345678'),  # Default emergency contact
+            extension_number=request.data.get('extension_number', '100'),  # Default extension
+            is_24_hours=request.data.get('is_24_hours', False),
+            operating_hours=request.data.get('operating_hours', {
+                "monday": {"start": "00:00", "end": "23:59"},
+                "tuesday": {"start": "00:00", "end": "23:59"},
+                "wednesday": {"start": "00:00", "end": "23:59"},
+                "thursday": {"start": "00:00", "end": "23:59"},
+                "friday": {"start": "00:00", "end": "23:59"},
+                "saturday": {"start": "00:00", "end": "23:59"},
+                "sunday": {"start": "00:00", "end": "23:59"}
+            }),
+            total_beds=request.data.get('total_beds', 20),
+            bed_capacity=request.data.get('bed_capacity', 20),
+            minimum_staff_required=minimum_staff_required,
+            current_staff_count=minimum_staff_required,  # Set current_staff_count to match minimum
+            
+        )
         return Response({
             'status': 'success',
-            'departments': DepartmentSerializer(departments, many=True).data
-        }, status=status.HTTP_200_OK)
+            'message': 'Department created successfully',
+            'department': DepartmentSerializer(department).data
+        }, status=status.HTTP_201_CREATED)
     except Exception as e:
-        logger.error(f"Error getting departments for doctor: {str(e)}")
+        logger.error(f"Error creating department: {str(e)}")
         return Response({
             'status': 'error',
             'message': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+            

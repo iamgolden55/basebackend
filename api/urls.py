@@ -59,7 +59,9 @@ from api.views.hospital.hospital_views import (
     delete_appointment_notes,
     get_departments_for_doctor,
     get_hospital_departments,
-    get_doctor_based_on_department
+    get_doctor_based_on_department,
+    create_department,
+    hospital_appointments
 )
 
 # Medical views
@@ -73,6 +75,7 @@ from api.views.hospital.patient_views import search_patients
 
 # Doctor views  
 from api.views.medical_staff.doctor_views import DoctorListView
+from api.views.medical_staff.staff_views import StaffManagementView
 
 # Notification views
 from api.views.utils.notification_views import InAppNotificationViewSet
@@ -91,6 +94,12 @@ router.register(r'admissions', PatientAdmissionViewSet, basename='admission')
 @api_view(['GET'])
 def health_check(request):
     return Response({"status": "healthy"})
+
+# Staff management endpoints
+staff_patterns = [
+    path('staff/', StaffManagementView.as_view(), name='staff-management'),
+]
+
 
 urlpatterns = [
     # ============= HOSPITAL REGISTRATION ENDPOINTS =============
@@ -122,6 +131,10 @@ urlpatterns = [
          SetPrimaryHospitalView.as_view(), 
          name='set-primary-hospital'),
     
+    # Department endpoints
+    path('hospitals/departments/', 
+         departments,
+         name='hospital-departments'),
     # Hospital admin registration endpoint -- This is the endpoint for the users to register as a hospital admin.
     # Can convert existing users to admins using existing_user=True and user_email parameters
     path('hospitals/admin/register/', 
@@ -158,6 +171,9 @@ urlpatterns = [
          pending_hospital_registrations, 
          name='pending-hospital-registrations'),
     
+    # Hospital appointments endpoint for admins
+    path('hospitals/appointments/', hospital_appointments, name='hospital-appointments'),
+
     # Now include router URLs - hospital router will handle /api/hospitals/<id>/ patterns
     path('', include(router.urls)),
     path('profile/', UserProfileUpdateView.as_view(), name='profile-update'),
@@ -254,6 +270,15 @@ urlpatterns = [
     
     # 🛡️ MEDICAL VAULT 3.0 - Secure file upload endpoints
     path('secure/', include('api.views.security.urls')),
+
+    # Hospital appointments endpoint for admins
+    path('hospitals/appointments/', hospital_appointments, name='hospital-appointments'),
+
+    # Staff management endpoints
+    path('', include(staff_patterns)),
+
+    # Create department endpoint
+    path('hospitals/departments/create/', create_department, name='create-department'),
 ]
 
 # Available endpoints:

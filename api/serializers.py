@@ -9,6 +9,9 @@ from api.models import Department
 from .tokens import HospitalAdminToken
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
+import logging
+
+logger = logging.getLogger(__name__)
 
 from api.models import Appointment, Doctor, AppointmentFee
 from datetime import datetime, timedelta
@@ -855,14 +858,13 @@ class AppointmentListSerializer(serializers.ModelSerializer):
     status_display = serializers.SerializerMethodField()
     hospital_name = serializers.SerializerMethodField()
     department_name = serializers.SerializerMethodField()
-    
-    # Add new formatted fields for list view
     formatted_date = serializers.SerializerMethodField(read_only=True)
     formatted_time = serializers.SerializerMethodField(read_only=True)
     formatted_date_time = serializers.SerializerMethodField(read_only=True)
     doctor_full_name = serializers.SerializerMethodField(read_only=True)
     formatted_appointment_type = serializers.SerializerMethodField(read_only=True)
     formatted_priority = serializers.SerializerMethodField(read_only=True)
+    patient_full_name = serializers.SerializerMethodField(read_only=True)
     
     class Meta:
         model = Appointment
@@ -887,7 +889,8 @@ class AppointmentListSerializer(serializers.ModelSerializer):
             'status',
             'status_display',
             'chief_complaint',
-            'created_at'
+            'created_at',
+            'patient_full_name'
         ]
     
     def get_status_display(self, obj):
@@ -899,7 +902,6 @@ class AppointmentListSerializer(serializers.ModelSerializer):
     def get_department_name(self, obj):
         return obj.department.name if obj.department else None
     
-    # Add the same getter methods as in AppointmentSerializer
     def get_formatted_date(self, obj):
         if obj.appointment_date:
             return obj.appointment_date.strftime("%B %d, %Y")
@@ -938,6 +940,11 @@ class AppointmentListSerializer(serializers.ModelSerializer):
     def get_doctor_full_name(self, obj):
         if obj.doctor and obj.doctor.user:
             return f"Dr. {obj.doctor.user.first_name} {obj.doctor.user.last_name}"
+        return None
+    
+    def get_patient_full_name(self, obj):
+        if obj.patient:
+            return f"{obj.patient.first_name} {obj.patient.last_name}" if obj.patient.first_name and obj.patient.last_name else obj.patient.first_name if obj.patient.first_name else obj.patient.last_name
         return None
 
 class AppointmentCancelSerializer(serializers.Serializer):
@@ -1163,7 +1170,266 @@ class Hospital2FAVerificationSerializer(serializers.Serializer):
     remember_device = serializers.BooleanField(default=False)
 
 
+# Staff Management Serializers
+class DoctorProfileSerializer(serializers.Serializer):
+    """Serializer for doctor-specific profile information"""
+    specialization = serializers.CharField(required=True)
+    medical_license_number = serializers.CharField(required=True)
+    license_expiry_date = serializers.DateField(required=True)
+    years_of_experience = serializers.IntegerField(required=True)
+    is_active = serializers.BooleanField(default=True)
+    status = serializers.CharField(default='active')
+    available_for_appointments = serializers.BooleanField(default=True)
+    consultation_hours_start = serializers.TimeField(required=False)
+    consultation_hours_end = serializers.TimeField(required=False)
+
+    def to_representation(self, instance):
+        """Custom representation to format consultation hours"""
+        data = super().to_representation(instance)
+        if 'consultation_hours_start' in data:
+            data['consultation_hours_start'] = data['consultation_hours_start'].strftime('%H:%M:%S')
+        if 'consultation_hours_end' in data:
+            data['consultation_hours_end'] = data['consultation_hours_end'].strftime('%H:%M:%S')
+        return data
+
+    def validate_medical_license_number(self, value):
+        """Ensure medical license number is unique"""
+        if Doctor.objects.filter(medical_license_number=value).exists():
+            raise serializers.ValidationError("This medical license number is already in use")
+        return value
+
+    def validate_license_expiry_date(self, value):
+        """Ensure license expiry date is in the future"""
+        if value <= timezone.now().date():
+            raise serializers.ValidationError("License expiry date must be in the future")
+        return value
+
+    def create(self, validated_data, user, hospital, department):
+        """Create doctor profile"""
+        return Doctor.objects.create(
+            user=user,
+            hospital=hospital,
+            department=department,
+            **validated_data
+        )
+
+class StaffCreationSerializer(serializers.ModelSerializer):
+    """Serializer for creating new staff members"""
+    password = serializers.CharField(write_only=True, required=True)
+    role = serializers.ChoiceField(choices=['doctor', 'nurse', 'staff'], required=True)
+    department = serializers.PrimaryKeyRelatedField(
+        queryset=Department.objects.all(),
+        required=True
+    )
+    doctor_profile = DoctorProfileSerializer(required=False)
+    role_display = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            'email', 'password', 'first_name', 'last_name', 'phone',
+            'role', 'role_display', 'department', 'department_name', 'date_of_birth', 'gender',
+            'preferred_language', 'secondary_languages', 'custom_language',
+            'doctor_profile',
+        ]
+        extra_kwargs = {
+            'password': {'write_only': True},
+            'email': {'required': True},
+            'first_name': {'required': True},
+            'last_name': {'required': True},
+            'phone': {'required': True},
+            'role': {'required': True},
+            'department': {'required': True},
+            'secondary_languages': {'required': False, 'default': []}
+        }
+
+    def get_role_display(self, obj):
+        """Get the display value for the role field"""
+        return obj.get_role_display()
+
+    def get_department_name(self, obj):
+        """Get the name of the department"""
+        return obj.department.name if obj.department else None
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        hospital = user.hospital_admin_profile.hospital
+        
+        # Extract and validate doctor profile if present
+        doctor_profile_data = validated_data.pop('doctor_profile', None)
+        if validated_data['role'] == 'doctor' and not doctor_profile_data:
+            raise serializers.ValidationError("Doctor role requires doctor_profile data")
+        
+        try:
+            # First create the base user
+            staff_user = CustomUser.objects.create_user(
+                email=validated_data['email'],
+                password=validated_data['password'],
+                first_name=validated_data['first_name'],
+                last_name=validated_data['last_name'],
+                phone=validated_data['phone'],
+                role=validated_data['role'],
+                date_of_birth=validated_data.get('date_of_birth'),
+                gender=validated_data.get('gender'),
+                preferred_language=validated_data.get('preferred_language', 'en'),
+                secondary_languages=validated_data.get('secondary_languages', []),
+                custom_language=validated_data.get('custom_language', '')
+            )
+            
+            # Create hospital registration
+            HospitalRegistration.objects.create(
+                user=staff_user,
+                hospital=hospital,
+                status='approved'
+            )
+            
+            # Create role-specific profile
+            if validated_data['role'] == 'doctor':
+                doctor_serializer = DoctorProfileSerializer(data=doctor_profile_data)
+                doctor_serializer.is_valid(raise_exception=True)
+                doctor_serializer.create(
+                    doctor_serializer.validated_data,
+                    user=staff_user,
+                    hospital=hospital,
+                    department=validated_data['department']
+                )
+            elif validated_data['role'] == 'nurse':
+                Nurse.objects.create(
+                    user=staff_user,
+                    hospital=hospital,
+                    department=validated_data['department']
+                )
+            elif validated_data['role'] == 'staff':
+                Staff.objects.create(
+                    user=staff_user,
+                    hospital=hospital,
+                    department=validated_data['department']
+                )
+            print(f"DEBUG: Successfully created base user: {staff_user}")
+            return staff_user
+        except Exception as e:
+            print(f"DEBUG: Error creating staff member: {str(e)}")
+            raise serializers.ValidationError(f"Failed to create staff member: {str(e)}")
+
+    
+    def validate(self, data):
+        """
+        Validate that the department belongs to the user's hospital
+        """
+        print(f"DEBUG: Validating staff creation data: {data}")
+        user = self.context['request'].user
+        print(f"DEBUG: Current user: {user}, is admin: {hasattr(user, 'hospital_admin_profile')}")
+        
+        if not hasattr(user, 'hospital_admin_profile'):
+            raise serializers.ValidationError("Only hospital admins can create staff")
+            
+        department = data.get('department')
+        print(f"DEBUG: Selected department: {department}, department hospital: {department.hospital if department else None}")
+        print(f"DEBUG: User's hospital: {user.hospital_admin_profile.hospital if hasattr(user, 'hospital_admin_profile') else None}")
+        
+        if not department.hospital == user.hospital_admin_profile.hospital:
+            raise serializers.ValidationError("Department must belong to your hospital")
+        
+        return data
+
+
+class StaffSerializer(serializers.ModelSerializer):
+    """Serializer for hospital staff members"""
+    full_name = serializers.SerializerMethodField()
+    role_display = serializers.SerializerMethodField()
+    department_name = serializers.SerializerMethodField()
+    is_available = serializers.SerializerMethodField()
+    availability_status = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = get_user_model()
+        fields = [
+            'id', 'email', 'full_name', 'role', 'role_display',
+            'department_name', 'is_available', 'availability_status',
+            'phone', 'last_login', 'date_joined'
+        ]
+        read_only_fields = ['id', 'email', 'last_login', 'date_joined']
+        
+    def get_full_name(self, obj):
+        """Get user's full name"""
+        return f"{obj.first_name} {obj.last_name}" if obj.first_name and obj.last_name else obj.email
+    
+    def get_role_display(self, obj):
+        """Get display name for role"""
+        return obj.get_role_display()
+    
+    def get_department_name(self, obj):
+        """Get department name if user is a doctor"""
+        if hasattr(obj, 'doctor_profile') and obj.doctor_profile.department:
+            return obj.doctor_profile.department.name
+        return None
+    
+    def get_is_available(self, obj):
+        """Check if staff member is currently available"""
+        # For doctors, check their availability flag
+        if hasattr(obj, 'doctor_profile'):
+            return obj.doctor_profile.available_for_appointments
+        # For other staff, check their active status
+        return obj.is_active
+    
+    def get_availability_status(self, obj):
+        """Get detailed availability status"""
+        if hasattr(obj, 'doctor_profile') and obj.doctor_profile:
+            consultation_hours_start = obj.doctor_profile.consultation_hours_start or datetime.strptime('09:00:00', '%H:%M:%S').time()
+            consultation_hours_end = obj.doctor_profile.consultation_hours_end or datetime.strptime('17:00:00', '%H:%M:%S').time()
+            
+            current_time = datetime.now().strftime('%H:%M:%S')
+            start_time = consultation_hours_start.strftime('%H:%M:%S')
+            end_time = consultation_hours_end.strftime('%H:%M:%S')
+            is_active = current_time >= start_time and current_time <= end_time
+            
+            return {
+                'is_available': obj.doctor_profile.available_for_appointments,
+                'consultation_hours_start': start_time,
+                'consultation_hours_end': end_time,
+                'next_available_slot': self._get_next_available_slot(obj),
+                'is_active': is_active
+            }
+        return {
+            'is_available': obj.is_active,
+            'is_active': True,
+            'next_available_slot': None,
+            'consultation_hours_start': None,
+            'consultation_hours_end': None
+        }
+    
+    def _get_next_available_slot(self, obj):
+        """Get next available time slot for doctor"""
+        if not hasattr(obj, 'doctor_profile'):
+            return None
+            
+        try:
+            from datetime import datetime, timedelta
+            from django.utils import timezone
+            
+            # Get current time
+            now = timezone.now()
+            
+            # Get doctor's consultation hours
+            start = obj.doctor_profile.consultation_hours_start
+            end = obj.doctor_profile.consultation_hours_end
+            
+            # Calculate next available slot
+            if now.time() < start:
+                return datetime.combine(now.date(), start)
+            elif now.time() < end:
+                return datetime.combine(now.date(), end)
+            else:
+                return datetime.combine(now.date() + timedelta(days=1), start)
+                
+        except Exception as e:
+            print(f"Error calculating next slot: {e}")
+            return None
+
+
 # Patient Admission System Serializers
+
 
 class PatientAdmissionListSerializer(serializers.ModelSerializer):
     """Serializer for listing patient admissions"""
