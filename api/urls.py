@@ -251,6 +251,9 @@ urlpatterns = [
 
     # Get doctors based on department
     path('doctors/department/<str:department_id>', get_doctor_based_on_department, name='doctor-based-on-department'),
+    
+    # 🛡️ MEDICAL VAULT 3.0 - Secure file upload endpoints
+    path('secure/', include('api.views.security.urls')),
 ]
 
 # Available endpoints:

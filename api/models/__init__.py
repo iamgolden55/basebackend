@@ -26,6 +26,9 @@ from .medical_staff.general_practitioner import GeneralPractitioner
 #=============notification folder==================================
 from .notifications.in_app_notification import InAppNotification
 
+#=============security folder==================================
+from .secure_documents import SecureDocument, DocumentAccessLog, DocumentShare
+
 #=============payment folder==================================
 from .payment_providers.base import BasePaymentProvider
 
@@ -60,6 +63,11 @@ __all__ = [
     
     # Notification models
     'InAppNotification',
+    
+    # Security models
+    'SecureDocument',
+    'DocumentAccessLog', 
+    'DocumentShare',
     
     # Payment models
     'BasePaymentProvider',
