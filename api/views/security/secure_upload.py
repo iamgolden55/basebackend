@@ -172,7 +172,7 @@ class SecureVirusScanner:
         return scan_result
 
 class SecureEncryptionService:
-    """🔒 File Encryption Service"""
+    """🔒 FORTRESS-LEVEL File Encryption Service"""
     
     @classmethod
     def generate_key(cls):
@@ -180,21 +180,54 @@ class SecureEncryptionService:
         return Fernet.generate_key()
     
     @classmethod
-    def encrypt_file(cls, file_content, key=None):
-        """🔒 Encrypt file content"""
-        if key is None:
-            key = cls.generate_key()
-            
+    def get_user_encryption_key(cls, user):
+        """🔑 Get user-specific encryption key (MATCHES DECRYPTION SERVICE)"""
         try:
-            fernet = Fernet(key)
-            encrypted_content = fernet.encrypt(file_content)
+            # SECURITY: Same key generation as decryption service!
+            import hashlib
+            key_material = f"phb_medical_vault_{user.id}_{user.email}".encode()
+            key_hash = hashlib.sha256(key_material).digest()
+            
+            # Generate Fernet key from hash
+            import base64
+            fernet_key = base64.urlsafe_b64encode(key_hash)
+            return Fernet(fernet_key)
+            
+        except Exception as e:
+            logger.error(f"User key generation error: {str(e)}")
+            return None
+    
+    @classmethod
+    def encrypt_file(cls, file_content, user=None):
+        """🔒 SECURE ENCRYPT: File content with user-specific key"""
+        try:
+            # Use user-specific key for encryption
+            if user:
+                fernet = cls.get_user_encryption_key(user)
+                if not fernet:
+                    return {'success': False, 'error': 'Key generation failed'}
+                
+                # Encrypt with user-specific cipher
+                encrypted_content = fernet.encrypt(file_content)
+                
+                # Generate key ID for storage (hash of user info)
+                import hashlib
+                key_material = f"phb_medical_vault_{user.id}_{user.email}".encode()
+                key_id = hashlib.sha256(key_material).hexdigest()[:16]
+                
+            else:
+                # Fallback to random key (should not happen)
+                key = cls.generate_key()
+                fernet = Fernet(key)
+                encrypted_content = fernet.encrypt(file_content)
+                key_id = hashlib.sha256(key).hexdigest()[:16]
             
             return {
                 'success': True,
                 'encrypted_content': encrypted_content,
-                'encryption_key': key.decode(),
                 'algorithm': 'AES-256 (Fernet)',
-                'key_id': hashlib.sha256(key).hexdigest()[:16]
+                'key_id': key_id,
+                'user_specific': user is not None
             }
         except Exception as e:
             logger.error(f"Encryption error: {str(e)}")
@@ -302,7 +335,15 @@ class SecureFileUploadView(APIView):
                 uploaded_file.seek(0)
                 file_content = uploaded_file.read()
                 
-                encryption_result = SecureEncryptionService.encrypt_file(file_content)
+                # 🔑 SECURITY FIX: Use user-specific encryption key!
+                logger.info(f"🔐 Encrypting file {uploaded_file.name} for user {user.id}")
+                encryption_result = SecureEncryptionService.encrypt_file(file_content, user)
+                
+                if not encryption_result['success']:
+                    logger.error(f"🚨 ENCRYPTION FAILED: {encryption_result.get('error')}")
+                else:
+                    logger.info(f"✅ Encryption successful for {uploaded_file.name}")
+                
                 
                 if not encryption_result['success']:
                     # Log encryption failure

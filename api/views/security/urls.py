@@ -9,6 +9,7 @@ from .secure_file_manager import (
     SecureFileListView,
     SecureFileDetailView, 
     SecureFilePreviewView,
+    SecureFileDeleteView,
     vault_statistics
 )
 
@@ -20,6 +21,7 @@ urlpatterns = [
     path('files/', SecureFileListView.as_view(), name='secure-file-list'),
     path('files/<str:file_id>/', SecureFileDetailView.as_view(), name='secure-file-detail'),
     path('files/<str:file_id>/preview/', SecureFilePreviewView.as_view(), name='secure-file-preview'),
+    path('files/<str:file_id>/delete/', SecureFileDeleteView.as_view(), name='secure-file-delete'),
     
     # 📊 Vault statistics
     path('vault/stats/', vault_statistics, name='vault-statistics'),
