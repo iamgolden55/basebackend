@@ -1265,35 +1265,68 @@ def departments(request):
     hospital_id = request.query_params.get('hospital')
     
     if hospital_id:
-        # If hospital_id is provided, verify user is registered with this hospital
-        hospital_registration = HospitalRegistration.objects.filter(
-            user=request.user,
-            hospital_id=hospital_id,
-            status='approved'
-        ).first()
-        
-        if not hospital_registration:
-            return Response({
-                'status': 'error',
-                'message': 'You are not registered with this hospital'
-            }, status=status.HTTP_403_FORBIDDEN)
+        # Check user role to determine authorization method
+        if request.user.role == 'hospital_admin':
+            # For hospital admins: verify they are admin of this hospital
+            try:
+                from api.models.medical.hospital_auth import HospitalAdmin
+                hospital_admin = HospitalAdmin.objects.get(user=request.user)
+                
+                if str(hospital_admin.hospital.id) != str(hospital_id):
+                    return Response({
+                        'status': 'error',
+                        'message': 'You can only access departments for your assigned hospital'
+                    }, status=status.HTTP_403_FORBIDDEN)
+                    
+                departments = Department.objects.filter(hospital_id=hospital_id)
+            except HospitalAdmin.DoesNotExist:
+                return Response({
+                    'status': 'error',
+                    'message': 'Hospital admin profile not found'
+                }, status=status.HTTP_403_FORBIDDEN)
+        else:
+            # For regular users: verify they are registered with this hospital
+            hospital_registration = HospitalRegistration.objects.filter(
+                user=request.user,
+                hospital_id=hospital_id,
+                status='approved'
+            ).first()
             
-        departments = Department.objects.filter(hospital_id=hospital_id)
+            if not hospital_registration:
+                return Response({
+                    'status': 'error',
+                    'message': 'You are not registered with this hospital'
+                }, status=status.HTTP_403_FORBIDDEN)
+                
+            departments = Department.objects.filter(hospital_id=hospital_id)
     else:
-        # If no hospital_id provided, get departments from user's primary hospital
-        primary_registration = HospitalRegistration.objects.filter(
-            user=request.user,
-            is_primary=True,
-            status='approved'
-        ).first()
-        
-        if not primary_registration:
-            return Response({
-                'status': 'error',
-                'message': 'No primary hospital found. Please register with a hospital first.'
-            }, status=status.HTTP_404_NOT_FOUND)
+        # If no hospital_id provided, get departments based on user role
+        if request.user.role == 'hospital_admin':
+            # For hospital admins: get departments from their assigned hospital
+            try:
+                from api.models.medical.hospital_auth import HospitalAdmin
+                hospital_admin = HospitalAdmin.objects.get(user=request.user)
+                departments = Department.objects.filter(hospital=hospital_admin.hospital)
+            except HospitalAdmin.DoesNotExist:
+                return Response({
+                    'status': 'error',
+                    'message': 'Hospital admin profile not found'
+                }, status=status.HTTP_403_FORBIDDEN)
+        else:
+            # For regular users: get departments from user's primary hospital
+            primary_registration = HospitalRegistration.objects.filter(
+                user=request.user,
+                is_primary=True,
+                status='approved'
+            ).first()
             
-        departments = Department.objects.filter(hospital=primary_registration.hospital)
+            if not primary_registration:
+                return Response({
+                    'status': 'error',
+                    'message': 'No primary hospital found. Please register with a hospital first.'
+                }, status=status.HTTP_404_NOT_FOUND)
+                
+            departments = Department.objects.filter(hospital=primary_registration.hospital)
     
     # 🛏️ ENHANCED WITH BED MAGIC! ✨
     # Build comprehensive department data with bed tracking, staff info, and patient statistics

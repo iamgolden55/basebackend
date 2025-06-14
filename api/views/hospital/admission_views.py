@@ -43,7 +43,13 @@ class PatientAdmissionViewSet(viewsets.ModelViewSet):
             ).distinct()
         elif user.role in ['hospital_admin', 'nurse', 'staff']:
             # Hospital staff see admissions in their hospital
-            return PatientAdmission.objects.filter(hospital__user=user)
+            try:
+                from api.models.medical.hospital_auth import HospitalAdmin
+                hospital_admin = HospitalAdmin.objects.get(user=user)
+                return PatientAdmission.objects.filter(hospital=hospital_admin.hospital)
+            except HospitalAdmin.DoesNotExist:
+                # If no hospital admin record found, return empty queryset
+                return PatientAdmission.objects.none()
         elif user.is_staff:
             # Admin users see all admissions
             return PatientAdmission.objects.all()
@@ -73,7 +79,7 @@ class PatientAdmissionViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
-    def discharge(self, request, pk=None):
+    def discharge(self, request, admission_id=None):
         """Discharge a patient"""
         admission = self.get_object()
         serializer = PatientDischargeSerializer(data=request.data)
@@ -97,7 +103,7 @@ class PatientAdmissionViewSet(viewsets.ModelViewSet):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
-    def transfer(self, request, pk=None):
+    def transfer(self, request, admission_id=None):
         """Transfer a patient to another department"""
         admission = self.get_object()
         serializer = PatientTransferSerializer(data=request.data)
@@ -210,7 +216,7 @@ class PatientAdmissionViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
-    def complete_registration(self, request, pk=None):
+    def complete_registration(self, request, admission_id=None):
         """
         Complete the registration for a temporary patient
         """
