@@ -225,7 +225,7 @@ class AppointmentViewSet(viewsets.ModelViewSet):
     filter_backends = [filters.SearchFilter, filters.OrderingFilter, DjangoFilterBackend]
     search_fields = ['doctor__first_name', 'doctor__last_name', 'chief_complaint', 'status']
     ordering_fields = ['appointment_date', 'created_at', 'priority']
-    ordering = ['-appointment_date']
+    ordering = ['appointment_date']  # Show upcoming appointments first (soonest first)
     filterset_fields = ['status', 'appointment_type', 'priority', 'hospital', 'department']
     lookup_field = 'pk'  # Default lookup field
     lookup_value_regex = r'[0-9]+|APT-[A-Za-z0-9]+'  # Allow numeric IDs or APT-* format
@@ -2227,6 +2227,131 @@ def get_doctor_based_on_department(request, department_id):
     except Exception as e:
         import traceback
         error_msg = f"Error retrieving doctors for department: {str(e)}\n{traceback.format_exc()}"
+        logger.error(error_msg)
+        return Response({
+            'error': str(e),
+            'detail': traceback.format_exc() if settings.DEBUG else 'An error occurred processing your request'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def check_appointment_conflict(request):
+    """
+    Check if a user already has an appointment in the same specialty on the same date.
+    This is used for frontend pre-validation before payment.
+    
+    Query Parameters:
+    - patient_id: The patient's user ID (optional - defaults to request.user)
+    - department: Department ID
+    - date: Appointment date (YYYY-MM-DD format)
+    - time: Appointment time (HH:MM format, optional)
+    
+    Returns:
+    {
+        "has_conflict": true/false,
+        "conflict_details": { ... } or null,
+        "message": "descriptive message"
+    }
+    """
+    user = request.user
+    
+    try:
+        # Get query parameters
+        patient_id = request.query_params.get('patient_id')
+        department_id = request.query_params.get('department')
+        appointment_date_str = request.query_params.get('date')
+        appointment_time_str = request.query_params.get('time', '00:00')
+        
+        # Validate required parameters
+        if not department_id or not appointment_date_str:
+            return Response({
+                'error': 'department and date parameters are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get the patient (default to request user)
+        if patient_id:
+            # Only allow checking for other users if current user is staff/admin
+            if not (user.is_staff or user.is_superuser or user.role == 'hospital_admin'):
+                return Response({
+                    'error': 'You can only check conflicts for your own appointments'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            try:
+                patient = CustomUser.objects.get(id=patient_id)
+            except CustomUser.DoesNotExist:
+                return Response({
+                    'error': f'Patient with ID {patient_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+        else:
+            patient = user
+        
+        # Get department
+        try:
+            department = Department.objects.get(id=department_id)
+        except Department.DoesNotExist:
+            return Response({
+                'error': f'Department with ID {department_id} not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Parse the date
+        try:
+            appointment_date = datetime.strptime(appointment_date_str, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({
+                'error': 'Invalid date format. Use YYYY-MM-DD'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Parse the time (optional)
+        try:
+            appointment_time = datetime.strptime(appointment_time_str, '%H:%M').time()
+        except ValueError:
+            return Response({
+                'error': 'Invalid time format. Use HH:MM'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Combine date and time
+        appointment_datetime = timezone.make_aware(
+            datetime.combine(appointment_date, appointment_time)
+        )
+        
+        # Check for existing appointments using the same logic as the Appointment model
+        existing_appointments = Appointment.objects.filter(
+            patient=patient,
+            department=department,
+            appointment_date__date=appointment_date,
+            status__in=['pending', 'confirmed', 'in_progress', 'scheduled']
+        ).exclude(
+            status__in=['cancelled', 'completed', 'no_show']
+        )
+        
+        if existing_appointments.exists():
+            # Conflict found
+            existing_appointment = existing_appointments.first()
+            
+            return Response({
+                'has_conflict': True,
+                'conflict_details': {
+                    'existing_appointment_id': existing_appointment.appointment_id,
+                    'department': department.name,
+                    'date': appointment_date.strftime('%Y-%m-%d'),
+                    'time': existing_appointment.appointment_date.strftime('%H:%M'),
+                    'status': existing_appointment.status,
+                    'formatted_date': existing_appointment.appointment_date.strftime('%B %d, %Y'),
+                    'formatted_time': existing_appointment.appointment_date.strftime('%I:%M %p')
+                },
+                'message': f'You already have a {department.name} appointment on {appointment_date.strftime("%B %d, %Y")}. Please choose another date or specialty.'
+            })
+        else:
+            # No conflict
+            return Response({
+                'has_conflict': False,
+                'conflict_details': None,
+                'message': f'No conflicts found. You can book a {department.name} appointment on {appointment_date.strftime("%B %d, %Y")}.'
+            })
+        
+    except Exception as e:
+        import traceback
+        error_msg = f"Error checking appointment conflict: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_msg)
         return Response({
             'error': str(e),

@@ -13,7 +13,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-q17f1+uwi)4ohs00y5@s_#u*=z(l_b$8w!-iyz*if9!x_3p!cj"
+# SECRET_KEY must be set in environment variables - no fallback for security
+try:
+    SECRET_KEY = os.environ['SECRET_KEY']
+except KeyError:
+    # Only allow fallback in development
+    if os.environ.get('DEBUG', 'False').lower() == 'true':
+        SECRET_KEY = "django-insecure-dev-only-q17f1+uwi)4ohs00y5@s_#u*=z(l_b$8w!-iyz*if9!x_3p!cj"
+    else:
+        raise Exception("SECRET_KEY environment variable must be set for production")
 
 # JWT settings
 REST_FRAMEWORK = {
@@ -31,9 +39,9 @@ SIMPLE_JWT = {
 }
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1,basebackend-88c8c04dd3ab.herokuapp.com').split(',')
 
 
 # Application definition
@@ -64,6 +72,31 @@ MIDDLEWARE = [
     "api.middleware.payment_security.PaymentSecurityMiddleware",
 ]
 
+# Security Settings
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+
+# Additional Security Headers
+CSP_DEFAULT_SRC = ("'self'",)
+CSP_SCRIPT_SRC = ("'self'", "'unsafe-inline'")  # Allow inline scripts for admin
+CSP_STYLE_SRC = ("'self'", "'unsafe-inline'")   # Allow inline styles for admin
+CSP_IMG_SRC = ("'self'", "data:", "https:")
+CSP_FONT_SRC = ("'self'",)
+CSP_CONNECT_SRC = ("'self'",)
+CSP_FRAME_ANCESTORS = ("'none'",)
+
+# HTTPS Settings (enable in production)
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 31536000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')  # For reverse proxy
+
 ROOT_URLCONF = "server.urls"
 
 TEMPLATES = [
@@ -84,14 +117,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "server.wsgi.application"
 
-# Email settings
+# Email settings - ENABLE REAL EMAIL SENDING
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_USE_TLS = True
 EMAIL_HOST = os.environ.get('EMAIL_HOST')
 EMAIL_PORT = os.environ.get('EMAIL_PORT')
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@phb.com')
 
 APPEND_SLASH = False
 
@@ -197,10 +230,13 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:5173",  # Add Vite frontend port
     "http://127.0.0.1:5173",  # Add Vite frontend port
+    "https://localhost:5173",  # HTTPS frontend port
+    "https://127.0.0.1:5173",  # HTTPS frontend port
     "http://192.168.11.196:3000",
 ]
 
-CORS_ALLOW_ALL_ORIGINS = True
+# CORS Configuration - Never allow all origins in production
+CORS_ALLOW_ALL_ORIGINS = False  # Hardcoded for security
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -226,13 +262,16 @@ CORS_ALLOW_METHODS = [
     'PUT',
 ]
 
+# Payment System Toggle
+PAYMENTS_ENABLED = os.environ.get('PAYMENTS_ENABLED', 'false').lower() == 'true'
+
 # Payment Provider Settings
 PAYMENT_PROVIDERS = {
     'paystack': {
         'secret_key': os.environ.get('PAYSTACK_SECRET_KEY'),
-        'public_key': os.environ.get('PAYSTACK_PUBLIC_KEY'),
+        'public_key': os.environ.get('PAYSTACK_PUBLIC_KEY'), 
         'webhook_secret': os.environ.get('PAYSTACK_WEBHOOK_SECRET'),
-        'callback_url': os.environ.get('PAYSTACK_CALLBACK_URL'),
+        'callback_url': os.environ.get('PAYSTACK_CALLBACK_URL', 'http://localhost:5173/payment-callback'),
         'urls': {
             'initialize': 'https://api.paystack.co/transaction/initialize',
             'verify': 'https://api.paystack.co/transaction/verify',
@@ -274,7 +313,7 @@ CACHES = {
     }
 }
 
-TWILIO_ACCOUNT_SID = 'your_account_sid'
-TWILIO_AUTH_TOKEN = 'your_auth_token'
-TWILIO_PHONE_NUMBER = 'your_twilio_phone_number'
-TWILIO_WHATSAPP_NUMBER = 'your_twilio_whatsapp_number'
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
+TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER')
+TWILIO_WHATSAPP_NUMBER = os.environ.get('TWILIO_WHATSAPP_NUMBER')

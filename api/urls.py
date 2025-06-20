@@ -61,7 +61,8 @@ from api.views.hospital.hospital_views import (
     get_hospital_departments,
     get_doctor_based_on_department,
     create_department,
-    hospital_appointments
+    hospital_appointments,
+    check_appointment_conflict
 )
 
 # Medical views
@@ -76,6 +77,16 @@ from api.views.hospital.patient_views import search_patients
 # Doctor views  
 from api.views.medical_staff.doctor_views import DoctorListView
 from api.views.medical_staff.staff_views import StaffManagementView
+
+# Payment views
+from api.views.payment.payment_views import (
+    PaymentInitializeView,
+    PaymentVerifyView,
+    PaymentHistoryView,
+    PaymentWebhookView,
+    PaymentStatsView,
+    PaymentStatusView
+)
 
 # Notification views
 from api.views.utils.notification_views import InAppNotificationViewSet
@@ -279,6 +290,17 @@ urlpatterns = [
 
     # Create department endpoint
     path('hospitals/departments/create/', create_department, name='create-department'),
+    
+    # 💰 PAYMENT ENDPOINTS - PHB Payment Integration
+    path('payments/initialize/', PaymentInitializeView.as_view(), name='payment-initialize'),
+    path('payments/verify/<str:reference>/', PaymentVerifyView.as_view(), name='payment-verify'),
+    path('payments/history/', PaymentHistoryView.as_view(), name='payment-history'),
+    path('payments/webhook/', PaymentWebhookView.as_view(), name='payment-webhook'),
+    path('payments/stats/', PaymentStatsView.as_view(), name='payment-stats'),
+    path('payments/status/', PaymentStatusView.as_view(), name='payment-status'),
+    
+    # 🛡️ APPOINTMENT CONFLICT CHECK - Pre-validation endpoint
+    path('appointments/check-conflict/', check_appointment_conflict, name='check-appointment-conflict'),
 ]
 
 # Available endpoints:

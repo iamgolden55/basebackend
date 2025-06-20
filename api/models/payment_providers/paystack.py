@@ -2,6 +2,7 @@ import requests
 import hmac
 import hashlib
 from django.conf import settings
+from django.utils import timezone
 from .base import BasePaymentProvider
 from django.core.exceptions import ValidationError
 
@@ -31,6 +32,11 @@ class PaystackProvider(BasePaymentProvider):
         """Initialize Paystack payment"""
         url = self.api_urls['initialize']
         
+        # 🔍 DEBUG: Check what we're getting from config
+        print(f"🔧 CONFIG DEBUG: Full config = {self.config}")
+        print(f"🔧 CONFIG DEBUG: Secret key = {self.config.get('secret_key', 'NOT_FOUND')}")
+        print(f"🔧 CONFIG DEBUG: SETTINGS check = {settings.PAYMENT_PROVIDERS}")
+        
         headers = {
             "Authorization": f"Bearer {self.config['secret_key']}",
             "Content-Type": "application/json",
@@ -47,22 +53,37 @@ class PaystackProvider(BasePaymentProvider):
             "metadata": {
                 "transaction_id": self.transaction.transaction_id,
                 "patient_id": self.transaction.patient.id,
-                "appointment_id": self.transaction.appointment.id,
-                "device_fingerprint": self.transaction.device_fingerprint,
                 "ip_address": self.get_client_ip()
             }
         }
         
+        # 🎯 ONLY ADD APPOINTMENT DATA IF APPOINTMENT EXISTS (Payment-First Approach!)
+        if self.transaction.appointment:
+            data["metadata"]["appointment_id"] = self.transaction.appointment.id
+        else:
+            # Payment-first approach - no appointment yet
+            data["metadata"]["payment_type"] = "pre_appointment"
+        
         try:
+            # 🔍 Enhanced debugging for payment initialization
+            print(f"🚀 PAYSTACK DEBUG: URL = {url}")
+            print(f"🚀 PAYSTACK DEBUG: Headers = {headers}")
+            print(f"🚀 PAYSTACK DEBUG: Data = {data}")
+            
             response = requests.post(
                 url, 
                 headers=headers, 
                 json=data,
                 timeout=30  # Add timeout
             )
+            
+            print(f"🚀 PAYSTACK DEBUG: Response Status = {response.status_code}")
+            print(f"🚀 PAYSTACK DEBUG: Response Text = {response.text}")
+            
             response.raise_for_status()
             
             result = response.json()
+            print(f"✅ PAYSTACK DEBUG: Success Result = {result}")
             
             # Store provider reference
             self.transaction.provider_reference = result['data']['reference']
@@ -71,6 +92,10 @@ class PaystackProvider(BasePaymentProvider):
             return result['data']['authorization_url']
             
         except requests.exceptions.RequestException as e:
+            print(f"🚨 PAYSTACK ERROR: Request Exception = {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"🚨 PAYSTACK ERROR: Response Status = {e.response.status_code}")
+                print(f"🚨 PAYSTACK ERROR: Response Text = {e.response.text}")
             self.log_error("Payment initialization failed", e)
             raise ValidationError("Payment initialization failed. Please try again.")
     
@@ -83,6 +108,9 @@ class PaystackProvider(BasePaymentProvider):
         }
         
         try:
+            print(f"🔍 PAYSTACK VERIFY: Starting verification for reference {reference}")
+            print(f"🔍 PAYSTACK VERIFY: Current payment status: {self.transaction.payment_status}")
+            
             response = requests.get(
                 url, 
                 headers=headers,
@@ -91,14 +119,74 @@ class PaystackProvider(BasePaymentProvider):
             response.raise_for_status()
             
             result = response.json()
+            print(f"🔍 PAYSTACK VERIFY: Response received: {result}")
             
             # Additional verification checks
             if not self.verify_transaction_data(result['data']):
+                print(f"❌ PAYSTACK VERIFY: Data verification failed")
                 raise ValidationError("Payment verification failed: Data mismatch")
-                
+            
+            # 🚀 UPDATE PAYMENT STATUS BASED ON PAYSTACK RESPONSE
+            paystack_status = result['data']['status']
+            print(f"🔍 PAYSTACK VERIFY: Paystack status = {paystack_status}")
+            print(f"🔍 PAYSTACK VERIFY: Current payment status = {self.transaction.payment_status}")
+            print(f"🔍 PAYSTACK VERIFY: Has appointment = {bool(self.transaction.appointment)}")
+            print(f"🔍 PAYSTACK VERIFY: Has description = {bool(self.transaction.description)}")
+            
+            if paystack_status == 'success':
+                # Mark payment as completed if Paystack says it's successful
+                if self.transaction.payment_status != 'completed':
+                    print(f"🚀 PAYSTACK VERIFY: Triggering mark_as_completed for payment {reference}")
+                    try:
+                        # Use mark_as_completed to trigger appointment creation for payment-first approach
+                        self.transaction.mark_as_completed(gateway_response=result['data'])
+                        print(f"✅ PAYSTACK VERIFY: Payment {reference} marked as completed and appointment creation triggered")
+                        
+                        # Refresh from database to get updated state
+                        self.transaction.refresh_from_db()
+                        print(f"✅ PAYSTACK VERIFY: After refresh - has appointment: {bool(self.transaction.appointment)}")
+                        
+                    except Exception as completion_error:
+                        print(f"❌ PAYSTACK VERIFY: Error in mark_as_completed for {reference}: {completion_error}")
+                        import traceback
+                        print(f"❌ PAYSTACK VERIFY: Completion traceback: {traceback.format_exc()}")
+                        # Still mark as completed manually to prevent payment loss
+                        self.transaction.payment_status = 'completed'
+                        self.transaction.completed_at = timezone.now()
+                        self.transaction.gateway_data = result['data']
+                        self.transaction.save()
+                        print(f"⚠️ PAYSTACK VERIFY: Payment {reference} marked as completed manually due to error")
+                        
+                else:
+                    print(f"ℹ️ PAYSTACK VERIFY: Payment {reference} already marked as completed")
+                    # Double-check appointment creation for already completed payments
+                    if not self.transaction.appointment and self.transaction.description:
+                        print(f"🔄 PAYSTACK VERIFY: Re-attempting appointment creation for completed payment {reference}")
+                        try:
+                            # Re-trigger appointment creation
+                            self.transaction.mark_as_completed(gateway_response=result['data'])
+                        except Exception as retry_error:
+                            print(f"❌ PAYSTACK VERIFY: Retry appointment creation failed: {retry_error}")
+                            
+            elif paystack_status == 'failed':
+                # Mark payment as failed
+                if self.transaction.payment_status != 'failed':
+                    self.transaction.payment_status = 'failed'
+                    self.transaction.gateway_data = result['data']
+                    self.transaction.save()
+                    print(f"❌ PAYSTACK VERIFY: Payment {reference} marked as failed")
+                else:
+                    print(f"ℹ️ PAYSTACK VERIFY: Payment {reference} already marked as failed")
+            else:
+                print(f"⚠️ PAYSTACK VERIFY: Unknown status '{paystack_status}' for payment {reference}")
+            
+            print(f"🔍 PAYSTACK VERIFY: Final payment status: {self.transaction.payment_status}")
+            print(f"🔍 PAYSTACK VERIFY: Final appointment status: {'linked' if self.transaction.appointment else 'none'}")
+            
             return result
             
         except requests.exceptions.RequestException as e:
+            print(f"🚨 PAYSTACK VERIFY ERROR: {str(e)}")
             self.log_error("Payment verification failed", e)
             raise ValidationError("Payment verification failed. Please contact support.")
     
@@ -109,22 +197,45 @@ class PaystackProvider(BasePaymentProvider):
             raise ValidationError("Invalid webhook signature")
             
         try:
+            print(f"🔔 WEBHOOK: Processing event '{data['event']}' for transaction {self.transaction.transaction_id}")
+            print(f"🔔 WEBHOOK: Current payment status: {self.transaction.payment_status}")
+            print(f"🔔 WEBHOOK: Has appointment: {bool(self.transaction.appointment)}")
+            print(f"🔔 WEBHOOK: Has description: {bool(self.transaction.description)}")
+            
             if data['event'] == 'charge.success':
                 # Verify transaction details before marking as complete
                 if self.verify_transaction_data(data['data']):
-                    self.transaction.mark_as_completed(
-                        gateway_response=data,
-                        user=None  # System user
-                    )
+                    print(f"🔔 WEBHOOK: Transaction data verified, triggering mark_as_completed")
+                    try:
+                        # Use mark_as_completed to trigger appointment creation for payment-first approach
+                        self.transaction.mark_as_completed(
+                            gateway_response=data,
+                            user=None  # System user
+                        )
+                        print(f"✅ WEBHOOK: Payment {self.transaction.transaction_id} completed and appointment creation triggered")
+                        
+                        # Refresh and log final state
+                        self.transaction.refresh_from_db()
+                        print(f"✅ WEBHOOK: Final state - status: {self.transaction.payment_status}, appointment: {'linked' if self.transaction.appointment else 'none'}")
+                        
+                    except Exception as webhook_completion_error:
+                        print(f"❌ WEBHOOK: Error in mark_as_completed: {webhook_completion_error}")
+                        import traceback
+                        print(f"❌ WEBHOOK: Completion traceback: {traceback.format_exc()}")
+                        raise
+                        
                 else:
                     self.log_security_event("Transaction data mismatch in webhook")
                     raise ValidationError("Transaction data mismatch")
                     
             elif data['event'] == 'charge.failed':
+                print(f"❌ WEBHOOK: Processing charge.failed event")
                 self.transaction.mark_as_failed(
                     gateway_response=data,
                     user=None  # System user
                 )
+            else:
+                print(f"ℹ️ WEBHOOK: Unhandled event type: {data['event']}")
                 
         except Exception as e:
             self.log_error("Webhook processing failed", e)
@@ -132,12 +243,20 @@ class PaystackProvider(BasePaymentProvider):
     
     def verify_transaction_data(self, data):
         """Verify transaction data matches our records"""
-        return all([
+        basic_checks = [
             str(data['amount']) == str(int(self.transaction.amount * 100)),
             data['currency'] == self.transaction.currency,
             data['reference'] == self.transaction.provider_reference,
             data['metadata'].get('transaction_id') == self.transaction.transaction_id
-        ])
+        ]
+        
+        # 🎯 ONLY CHECK APPOINTMENT_ID IF APPOINTMENT EXISTS (Payment-First Approach!)
+        if self.transaction.appointment:
+            basic_checks.append(
+                data['metadata'].get('appointment_id') == self.transaction.appointment.id
+            )
+        
+        return all(basic_checks)
     
     def log_error(self, message, exception):
         """Log payment processing errors"""
@@ -167,12 +286,9 @@ class PaystackProvider(BasePaymentProvider):
     
     def get_client_ip(self):
         """Get client IP from request"""
-        from django.http import HttpRequest
-        request = HttpRequest()
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0]
-        return request.META.get('REMOTE_ADDR')
+        # For now, return a default IP since we don't have access to the request object
+        # TODO: Pass request object to provider for accurate IP detection
+        return "127.0.0.1"
     
     def refund_payment(self, amount=None):
         """Process refund through Paystack"""

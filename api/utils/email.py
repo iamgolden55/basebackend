@@ -408,3 +408,127 @@ def send_appointment_reassignment_email(appointment, previous_doctor, cancellati
             'error': str(e),
             'recipient': getattr(appointment, 'patient', {}).get('email', 'unknown')
         } 
+
+
+def send_payment_confirmation_email(payment_transaction):
+    """
+    Send a payment confirmation email after successful payment
+    
+    Args:
+        payment_transaction: The PaymentTransaction object with payment details
+    
+    Returns:
+        dict: Information about the email sending status
+    """
+    try:
+        # 🚨 DEBUG EMAIL CONFIGURATION
+        logger.info(f"📧 EMAIL DEBUG: EMAIL_HOST = {os.environ.get('EMAIL_HOST')}")
+        logger.info(f"📧 EMAIL DEBUG: EMAIL_HOST_USER = {os.environ.get('EMAIL_HOST_USER')}")
+        logger.info(f"📧 EMAIL DEBUG: DEFAULT_FROM_EMAIL = {os.environ.get('DEFAULT_FROM_EMAIL')}")
+        
+        frontend_url = os.environ.get('NEXTJS_URL', '').rstrip('/')
+        
+        # Patient's name
+        patient = payment_transaction.patient
+        patient_name = patient.get_full_name() if hasattr(patient, 'get_full_name') else patient.email
+        
+        logger.info(f"📧 Attempting to send payment confirmation email to {patient.email} for payment {payment_transaction.transaction_id}")
+        
+        # Build context based on whether appointment exists (payment-first vs appointment-first)
+        context = {
+            'patient_name': patient_name,
+            'payment_id': payment_transaction.transaction_id,
+            'payment_status': payment_transaction.get_payment_status_display(),
+            'amount': payment_transaction.amount_display,
+            'currency': payment_transaction.currency,
+            'payment_method': payment_transaction.get_payment_method_display(),
+            'payment_provider': payment_transaction.payment_provider.title(),
+            'payment_date': payment_transaction.completed_at or payment_transaction.created_at,
+            'frontend_url': frontend_url,
+        }
+        
+        # If appointment exists, add appointment details
+        if payment_transaction.appointment:
+            appointment = payment_transaction.appointment
+            
+            # Get formatted appointment data
+            from api.serializers import AppointmentSerializer
+            serializer = AppointmentSerializer(appointment)
+            serializer_data = serializer.data
+            
+            context.update({
+                'appointment_id': appointment.appointment_id,
+                'appointment_date': appointment.appointment_date,
+                'doctor_name': serializer_data.get('doctor_full_name'),
+                'department_name': serializer_data.get('department_name'),
+                'hospital_name': serializer_data.get('hospital_name'),
+                'has_appointment': True,
+                'appointment_type': serializer_data.get('formatted_appointment_type'),
+            })
+            
+            email_subject = f'Payment Confirmation - {appointment.appointment_id}'
+        else:
+            # Payment-first approach - no appointment yet
+            context.update({
+                'has_appointment': False,
+                'appointment_id': 'Pending',
+                'doctor_name': 'To be assigned',
+                'hospital_name': 'PHB Network Hospital',
+                'department_name': 'To be determined',
+            })
+            
+            email_subject = f'Payment Received - {payment_transaction.transaction_id}'
+        
+        logger.info(f"📧 Email context prepared: subject = {email_subject}")
+        
+        # Render Gmail-optimized HTML template (NO PLAIN TEXT!)
+        html_message = render_to_string('email/payment_confirmation_html_only.html', context)
+        
+        logger.info(f"📧 Gmail-optimized HTML email template rendered successfully")
+        
+        # Create Gmail-friendly HTML-only email
+        email = EmailMessage(
+            subject=email_subject,
+            body=html_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@phb.com'),
+            to=[patient.email]
+        )
+        email.content_subtype = "html"  # Force HTML display
+        
+        # Gmail-specific headers to force HTML rendering
+        email.extra_headers = {
+            'Content-Type': 'text/html; charset=UTF-8',
+            'MIME-Version': '1.0',
+            'X-Priority': '3',
+            'X-MSMail-Priority': 'Normal',
+            'X-Mailer': 'PHB Hospital System',
+            'X-MimeOLE': 'Produced By PHB Medical Platform'
+        }
+        
+        logger.info(f"📧 EmailMessage created, attempting to send...")
+        
+        # Send the email
+        email.send(fail_silently=False)
+        
+        logger.info(f"✅ Payment confirmation email sent successfully to {patient.email} for payment {payment_transaction.transaction_id}")
+        
+        return {
+            'success': True,
+            'recipient': patient.email,
+            'subject': email_subject,
+            'payment_id': payment_transaction.transaction_id,
+            'has_appointment': payment_transaction.appointment is not None,
+            'sent_at': timezone.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to send payment confirmation email: {str(e)}")
+        logger.error(f"❌ Email error for payment {payment_transaction.transaction_id}: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        return {
+            'success': False,
+            'error': str(e),
+            'payment_id': payment_transaction.transaction_id,
+            'recipient': payment_transaction.patient.email if payment_transaction.patient else 'unknown'
+        }

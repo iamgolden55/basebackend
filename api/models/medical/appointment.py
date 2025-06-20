@@ -6,6 +6,7 @@ from ..base import TimestampedModel
 from .appointment_notification import AppointmentNotification
 from ..medical_staff.doctor import Doctor
 import logging
+
 logger = logging.getLogger(__name__)
 
 class Appointment(TimestampedModel):
@@ -199,7 +200,7 @@ class Appointment(TimestampedModel):
     completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        ordering = ['-appointment_date']
+        ordering = ['appointment_date']  # Show upcoming appointments first (soonest first)
         indexes = [
             models.Index(fields=['appointment_date']),
             models.Index(fields=['status']),
@@ -219,69 +220,107 @@ class Appointment(TimestampedModel):
         super().clean()  # Call parent's clean first
         
         # Validate appointment date is not in the past
+        self._validate_appointment_date()
+        
+        # Validate hospital registration
+        self._validate_hospital_registration_check()
+        
+        # For emergency appointments, bypass availability checks
+        is_emergency = self._is_emergency_appointment()
+        
+        # Check for existing appointments with the same specialty on the same day
+        if not is_emergency:
+            self._validate_duplicate_appointments()
+            
+        # Only check doctor availability if a doctor is assigned and it's not an emergency
+        if self.doctor and not is_emergency:
+            self._validate_doctor_availability()
+            
+        # Validate status transitions
+        if self.pk:
+            self._validate_status_transitions()
+
+    def _validate_appointment_date(self):
+        """Validate appointment date is not in the past"""
         if self.appointment_date:
             # Ensure timezone-aware dates and remove microseconds
             now = timezone.now().replace(microsecond=0)
             appointment_date = self.appointment_date.replace(microsecond=0)
             
             # Debug output for timezone information
-            print(f"Model validation - Current time: {now} ({now.tzinfo})")
-            print(f"Model validation - Appointment time: {appointment_date} ({appointment_date.tzinfo})")
+            logger.debug(f"Model validation - Current time: {now} ({now.tzinfo})")
+            logger.debug(f"Model validation - Appointment time: {appointment_date} ({appointment_date.tzinfo})")
             
             if appointment_date <= now:
                 raise ValidationError({
                     'appointment_date': ["Appointment cannot be scheduled in the past or at the current time"]
                 })
-            
-        # Validate hospital registration
+
+    def _validate_hospital_registration_check(self):
+        """Validate hospital registration"""
         if not self._validate_hospital_registration():
             raise ValidationError({
                 'hospital': ["Patient must be registered with the hospital"]
             })
-            
-        # For emergency appointments, bypass availability checks
-        is_emergency = (
+
+    def _is_emergency_appointment(self):
+        """Check if this is an emergency appointment"""
+        return (
             self.priority == 'emergency' or 
             self.appointment_type == 'emergency'
         )
+
+    def _validate_duplicate_appointments(self):
+        """Check for existing appointments with the same specialty on the same day"""
+        logger.debug(f"Checking duplicates for patient={self.patient.id}, date={self.appointment_date.date()}, dept={self.department.id}")
         
-        # Check for existing appointments with the same specialty on the same day
-        if not is_emergency:  # Skip for emergency appointments
-            same_specialty_appointments = Appointment.objects.filter(
-                patient=self.patient,
-                appointment_date__date=self.appointment_date.date(),
-                department=self.department,  # Same department/specialty
-                status__in=['pending', 'confirmed', 'in_progress']
-            )
-            
-            # Exclude current appointment if it's being updated
-            if self.pk:
-                same_specialty_appointments = same_specialty_appointments.exclude(pk=self.pk)
-            
-            if same_specialty_appointments.exists():
-                raise ValidationError({
-                    'appointment_date': ["You already have an appointment in this specialty on this date. Please choose another date or specialty."]
-                })
-            
-        # Only check doctor availability if a doctor is assigned and it's not an emergency
-        if self.doctor and not is_emergency:
-            if not self.doctor.is_available_at(self.appointment_date, is_emergency=False, current_appointment=self):
-                raise ValidationError({
-                    'appointment_date': ["Doctor is not available at this time"]
-                })
-                
-            if not self.doctor.can_accept_appointment(self.appointment_date.date()):
-                raise ValidationError({
-                    'appointment_date': ["Doctor's schedule is full for this date"]
-                })
-            
-        # Validate status transitions
+        same_specialty_appointments = Appointment.objects.filter(
+            patient=self.patient,
+            appointment_date__date=self.appointment_date.date(),
+            department=self.department,  # Same department/specialty
+            status__in=['pending', 'confirmed', 'in_progress', 'scheduled']
+        ).exclude(
+            status__in=['cancelled', 'completed', 'no_show']
+        )
+        
+        logger.debug(f"Query before exclusion count: {same_specialty_appointments.count()}")
+        
+        # Exclude current appointment if it's being updated
         if self.pk:
-            old_instance = Appointment.objects.get(pk=self.pk)
-            if not self._is_valid_status_transition(old_instance.status, self.status):
-                raise ValidationError({
-                    'status': [f"Invalid status transition from {old_instance.status} to {self.status}"]
-                })
+            logger.debug(f"Excluding current appointment pk={self.pk}")
+            same_specialty_appointments = same_specialty_appointments.exclude(pk=self.pk)
+            logger.debug(f"Count after exclusion: {same_specialty_appointments.count()}")
+        
+        if same_specialty_appointments.exists():
+            existing_appointment = same_specialty_appointments.first()
+            logger.warning(f"Found duplicate appointment {existing_appointment.appointment_id}")
+            for apt in same_specialty_appointments:
+                logger.debug(f"Duplicate: ID={apt.id}, Date={apt.appointment_date}, Status={apt.status}")
+            raise ValidationError({
+                'appointment_date': [f"You already have a {self.department.name} appointment on {self.appointment_date.date().strftime('%B %d, %Y')}. Please choose another date or specialty."]
+            })
+        else:
+            logger.debug("No duplicate appointments found")
+
+    def _validate_doctor_availability(self):
+        """Validate doctor availability and schedule capacity"""
+        if not self.doctor.is_available_at(self.appointment_date, is_emergency=False, current_appointment=self):
+            raise ValidationError({
+                'appointment_date': ["Doctor is not available at this time"]
+            })
+            
+        if not self.doctor.can_accept_appointment(self.appointment_date.date()):
+            raise ValidationError({
+                'appointment_date': ["Doctor's schedule is full for this date"]
+            })
+
+    def _validate_status_transitions(self):
+        """Validate status transitions"""
+        old_instance = Appointment.objects.get(pk=self.pk)
+        if not self._is_valid_status_transition(old_instance.status, self.status):
+            raise ValidationError({
+                'status': [f"Invalid status transition from {old_instance.status} to {self.status}"]
+            })
 
     def _validate_hospital_registration(self):
         """Check if patient is registered with the hospital"""
@@ -297,21 +336,44 @@ class Appointment(TimestampedModel):
 
     def save(self, *args, **kwargs):
         # Generate appointment ID if not provided
+        self._generate_appointment_id_if_needed()
+        
+        # Get the old status if this is an existing appointment
+        old_status = self._get_old_status_if_updating()
+        
+        # Validate and update status changes
+        self._validate_and_update_status_changes(old_status)
+        
+        # Always run full validation to ensure data integrity
+        self.full_clean()
+        
+        # Check if this is a new appointment
+        is_new_appointment = self.pk is None
+        
+        super().save(*args, **kwargs)
+        
+        # Handle notifications based on appointment status
+        self._send_appointment_notifications(is_new_appointment, old_status)
+
+    def _generate_appointment_id_if_needed(self):
+        """Generate appointment ID if not provided"""
         if not self.appointment_id:
             self.appointment_id = self.generate_appointment_id()
-            
-        # Get the old status if this is an existing appointment
+
+    def _get_old_status_if_updating(self):
+        """Get the old status if this is an existing appointment"""
         old_status = None
-        bypass_validation = kwargs.pop('bypass_validation', False)
-        
         if self.pk:
             # This is an update, not a creation - get the old status
             old_instance = Appointment.objects.filter(pk=self.pk).first()
             if old_instance:
                 old_status = old_instance.status
-        
+        return old_status
+
+    def _validate_and_update_status_changes(self, old_status):
+        """Validate status transitions and update timestamps"""
         # Check for valid status transition
-        if old_status and self.status != old_status and not bypass_validation:
+        if old_status and self.status != old_status:
             if not self._is_valid_status_transition(old_status, self.status):
                 raise ValidationError({
                     'status': [f'Invalid status transition from {old_status} to {self.status}']
@@ -323,65 +385,70 @@ class Appointment(TimestampedModel):
                 self.cancelled_at = timezone.now()
             elif self.status == 'completed':
                 self.completed_at = timezone.now()
+
+    def _send_appointment_notifications(self, is_new_appointment, old_status):
+        """Handle notifications based on appointment status"""
+        if is_new_appointment:
+            self._send_new_appointment_notifications()
+        elif old_status and self.status != old_status:
+            self._send_status_update_notifications()
+
+    def _send_new_appointment_notifications(self):
+        """Send notifications for new appointment booking"""
+        # Send booking confirmation email
+        from api.utils.email import send_appointment_confirmation_email
+        send_appointment_confirmation_email(self)
         
-        # Full validation (skip if bypassing)
-        if not bypass_validation:
-            self.full_clean()
+        # Create email notification
+        AppointmentNotification.objects.create(
+            appointment=self,
+            notification_type='email',
+            event_type='booking_confirmation',
+            recipient=self.patient,
+            subject=f"Appointment Booking Confirmation - {self.appointment_id}",
+            message=(
+                f"Dear {self.patient.get_full_name()},\n\n"
+                f"Your appointment "
+                f"{'with Dr. ' + self.doctor.user.get_full_name() + ' ' if self.doctor and self.doctor.user else ''}"
+                f"at {self.hospital.name} ({self.department.name}) on "
+                f"{self.appointment_date.strftime('%Y-%m-%d %H:%M')} has been booked.\n\n"
+                f"Appointment ID: {self.appointment_id}\n"
+                f"Status: {'Pending doctor assignment and confirmation' if not self.doctor else 'Pending doctor confirmation'}\n"
+            ),
+            template_name='appointment_booking_confirmation'
+        )
         
-        super().save(*args, **kwargs)
-        
-        # Handle notifications based on appointment status
-        if self.pk is None:
-            # New appointment - send booking confirmation
-            from api.utils.email import send_appointment_confirmation_email
-            send_appointment_confirmation_email(self)
-            
-            # Create notifications for new booking
+        # Create SMS notification if phone number available
+        if self.patient.phone:
             AppointmentNotification.objects.create(
                 appointment=self,
-                notification_type='email',
+                notification_type='sms',
                 event_type='booking_confirmation',
                 recipient=self.patient,
-                subject=f"Appointment Booking Confirmation - {self.appointment_id}",
+                subject=f"Appt Booked: {self.appointment_id}",
                 message=(
-                    f"Dear {self.patient.get_full_name()},\n\n"
-                    f"Your appointment with Dr. {self.doctor.user.get_full_name()} "
-                    f"at {self.hospital.name} ({self.department.name}) on "
-                    f"{self.appointment_date.strftime('%Y-%m-%d %H:%M')} has been booked.\n\n"
-                    f"Appointment ID: {self.appointment_id}\n"
-                    f"Status: Pending doctor's confirmation\n"
-                ),
-                template_name='appointment_booking_confirmation'
-            )
-            
-            if self.patient.phone:
-                AppointmentNotification.objects.create(
-                    appointment=self,
-                    notification_type='sms',
-                    event_type='booking_confirmation',
-                    recipient=self.patient,
-                    subject=f"Appt Booked: {self.appointment_id}",
-                    message=(
-                        f"Appt Booked: Dr. {self.doctor.user.last_name}, "
-                        f"{self.appointment_date.strftime('%b %d, %H:%M')}. "
-                        f"ID: {self.appointment_id}. "
-                        f"Status: Pending"
-                    )
+                    f"Appt Booked: "
+                    f"{'Dr. ' + self.doctor.user.last_name + ', ' if self.doctor and self.doctor.user else ''}"
+                    f"{self.appointment_date.strftime('%b %d, %H:%M')}. "
+                    f"ID: {self.appointment_id}. "
+                    f"Status: Pending"
                 )
+            )
+
+    def _send_status_update_notifications(self):
+        """Send notifications for status updates"""
+        # Status has changed - send status update notification
+        from api.utils.email import send_appointment_status_update_email
+        send_appointment_status_update_email(self)
         
-        elif old_status and self.status != old_status:
-            # Status has changed - send status update notification
-            from api.utils.email import send_appointment_status_update_email
-            send_appointment_status_update_email(self)
-            
-            # Create status update notification
-            AppointmentNotification.create_status_update_notification(self)
-            
-            # Special handling for confirmed appointments
-            if self.status == 'confirmed':
-                from api.utils.email import send_appointment_confirmation_email
-                send_appointment_confirmation_email(self)
-                self.create_reminders()  # Create reminder notifications
+        # Create status update notification
+        AppointmentNotification.create_status_update_notification(self)
+        
+        # Special handling for confirmed appointments
+        if self.status == 'confirmed':
+            from api.utils.email import send_appointment_confirmation_email
+            send_appointment_confirmation_email(self)
+            self.create_reminders()  # Create reminder notifications
 
     @staticmethod
     def generate_appointment_id():
@@ -437,7 +504,8 @@ class Appointment(TimestampedModel):
             subject=f"Appointment Accepted - {self.appointment_id}",
             message=(
                 f"Dear {self.patient.get_full_name()},\n\n"
-                f"Your appointment has been accepted by Dr. {doctor.user.get_full_name()} "
+                f"Your appointment has been accepted "
+                f"{'by Dr. ' + doctor.user.get_full_name() + ' ' if doctor and doctor.user else ''}"
                 f"at {self.hospital.name} ({self.department.name}) on "
                 f"{self.appointment_date.strftime('%Y-%m-%d %H:%M')}.\n\n"
                 f"Appointment ID: {self.appointment_id}\n"
@@ -512,12 +580,11 @@ class Appointment(TimestampedModel):
         )
 
     def refer(self, target_hospital=None, target_department=None, reason=None, referred_by=None):
-        print(f"\n=== REFERRAL DEBUG ===")
-        print(f"Original Appointment ID: {self.id}")
-        print(f"Requested By User: {referred_by} (Staff: {referred_by.is_staff}, Doctor: {hasattr(referred_by, 'doctor_profile')})")
-        print(f"Target Hospital: {target_hospital.id if target_hospital else 'Same Hospital'}")
-        print(f"Target Department: {target_department.id if target_department else 'Not Specified'}")
-        print(f"Current Status: {self.status}")
+        logger.info(f"Processing referral for appointment {self.id}")
+        logger.debug(f"Requested by user: {referred_by} (Staff: {referred_by.is_staff}, Doctor: {hasattr(referred_by, 'doctor_profile')})")
+        logger.debug(f"Target hospital: {target_hospital.id if target_hospital else 'Same Hospital'}")
+        logger.debug(f"Target department: {target_department.id if target_department else 'Not Specified'}")
+        logger.debug(f"Current status: {self.status}")
         
         is_doctor = hasattr(referred_by, 'doctor_profile')
         if not (referred_by.has_perm('api.can_refer_appointments') or 
@@ -541,7 +608,7 @@ class Appointment(TimestampedModel):
             self.referral_reason = reason
             self.referral_date = timezone.now()
         else:
-            print("Appointment already referred - Skipping status update")
+            logger.info("Appointment already referred - Skipping status update")
         
         if target_hospital:
             self.referred_to_hospital = target_hospital
@@ -594,12 +661,11 @@ class Appointment(TimestampedModel):
             referred_from=self
         )
         
-        print(f"\n=== NEW APPOINTMENT CREATED ===")
-        print(f"New Appointment ID: {new_appointment.id}")
-        print(f"Patient: {new_appointment.patient} (ID: {new_appointment.patient_id})")
-        print(f"Scheduled Date: {new_appointment.appointment_date}")
-        print(f"Status: {new_appointment.status}")
-        print(f"Referred From: {self.id}\n")
+        logger.info(f"Created new referral appointment {new_appointment.id}")
+        logger.debug(f"Patient: {new_appointment.patient} (ID: {new_appointment.patient_id})")
+        logger.debug(f"Scheduled Date: {new_appointment.appointment_date}")
+        logger.debug(f"Status: {new_appointment.status}")
+        logger.debug(f"Referred From: {self.id}")
 
         logger.debug(
             f"New referral appointment created - ID: {new_appointment.id}, "
@@ -708,7 +774,7 @@ class Appointment(TimestampedModel):
         return {
             'appointment_id': self.appointment_id,
             'patient': self.patient.get_full_name(),
-            'doctor': f"Dr. {self.doctor.user.get_full_name()}" if self.doctor else "No Doctor Assigned",
+            'doctor': f"Dr. {self.doctor.user.get_full_name()}" if self.doctor and self.doctor.user else "No Doctor Assigned",
             'department': self.department.name,
             'hospital': self.hospital.name,
             'date': self.appointment_date,

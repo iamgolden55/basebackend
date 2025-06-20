@@ -22,6 +22,7 @@ from api.models.medical.medical_record import MedicalRecord
 from api.models.medical.medication import Medication, MedicationCatalog
 from api.models.medical.patient_admission import PatientAdmission
 from api.models.medical.patient_transfer import PatientTransfer
+from api.models.medical.payment_transaction import PaymentTransaction
 
 CustomUser = get_user_model()
 
@@ -653,29 +654,31 @@ class AppointmentSerializer(serializers.ModelSerializer):
         Preprocess data before validation.
         Add detailed debug logging.
         """
-        print("\n=== APPOINTMENT SERIALIZER TO_INTERNAL_VALUE ===")
-        print(f"INCOMING DATA: {data}")
+        logger.debug("Appointment serializer to_internal_value called")
+        logger.debug(f"Incoming data: {data}")
         
         # Make a copy of the data to avoid modifying the original
         data_dict = data.copy() if hasattr(data, 'copy') else dict(data)
         
-        # Check for required fields and print warnings
+        # Check for required fields and log warnings
         required_fields = ['hospital', 'department', 'appointment_date', 'appointment_type']
         for field in required_fields:
             if field not in data_dict or data_dict[field] is None:
-                print(f"WARNING: Required field '{field}' is missing or null")
+                logger.warning(f"Required field '{field}' is missing or null")
         
         # More detailed field logging
-        print("FIELD VALUES:")
+        logger.debug("Field values:")
         for key, value in data_dict.items():
-            print(f"  - {key}: {value} (type: {type(value).__name__})")
+            logger.debug(f"  - {key}: {value} (type: {type(value).__name__})")
         
         try:
             result = super().to_internal_value(data_dict)
-            print(f"INTERNAL VALUE RESULT: {result}")
+            logger.debug(f"Internal value result: {result}")
+            logger.debug("to_internal_value completed successfully - validate() should be called next")
             return result
         except Exception as e:
-            print(f"ERROR IN to_internal_value: {e}")
+            logger.error(f"Error in to_internal_value: {e}")
+            logger.error("to_internal_value failed - validate() will NOT be called")
             raise
     
     class Meta:
@@ -793,39 +796,126 @@ class AppointmentSerializer(serializers.ModelSerializer):
             return f"Dr. {obj.doctor.user.first_name} {obj.doctor.user.last_name}"
         return None
     
+    def is_valid(self, *, raise_exception=False):
+        """Override is_valid to add debugging"""
+        logger.debug("Appointment serializer is_valid() called")
+        logger.debug(f"raise_exception: {raise_exception}")
+        result = super().is_valid(raise_exception=raise_exception)
+        logger.debug(f"is_valid() result: {result}")
+        if hasattr(self, '_errors'):
+            logger.debug(f"Validation errors: {self._errors}")
+        return result
+
     def validate(self, data):
         """
         Validate appointment data
         """
-        print("\n============ APPOINTMENT SERIALIZER VALIDATION ============")
-        print(f"DATA BEING VALIDATED: {data}")
+        logger.debug("Appointment serializer validation called")
+        logger.debug(f"Data being validated: {data}")
         
         # List required fields that are missing
         required_fields = ['hospital', 'department', 'appointment_date', 'appointment_type']
         missing_fields = [field for field in required_fields if field not in data]
         if missing_fields:
-            print(f"MISSING REQUIRED FIELDS: {missing_fields}")
+            logger.error(f"Missing required fields: {missing_fields}")
             error_message = f"Missing required fields: {', '.join(missing_fields)}"
             raise serializers.ValidationError(error_message)
         
         # Check data types of important fields
-        print("FIELD TYPES:")
+        logger.debug("Field types:")
         for field, value in data.items():
-            print(f"  - {field}: {type(value).__name__}")
+            logger.debug(f"  - {field}: {type(value).__name__}")
         
         # Get appointment date from data
         appointment_date = data.get('appointment_date')
-        print(f"APPOINTMENT DATE: {appointment_date}")
+        logger.debug(f"Appointment date: {appointment_date}")
         
         # Check if appointment date is in the past
         if appointment_date and appointment_date < timezone.now():
-            print("ERROR: Appointment date is in the past")
+            logger.error("Appointment date is in the past")
             raise serializers.ValidationError("Cannot create appointments in the past.")
+        
+        # CRITICAL: Check for duplicate appointments in same specialty on same date
+        # This prevents users from reaching payment stage with invalid appointments
+        logger.debug("Starting duplicate appointment check")
+        department = data.get('department')
+        appointment_type = data.get('appointment_type')
+        priority = data.get('priority')
+        
+        if appointment_date and department:
+            logger.debug(f"Checking for duplicate specialty appointments: Department {department.id} ({department.name}) on {appointment_date.date()}")
+            
+            # Skip duplicate check for emergency appointments
+            is_emergency = (
+                priority == 'emergency' or 
+                appointment_type == 'emergency'
+            )
+            
+            logger.debug(f"Appointment type: {appointment_type}, Priority: {priority}, Is emergency: {is_emergency}")
+            
+            if is_emergency:
+                logger.info("Skipping duplicate check for emergency appointment")
+            else:
+                # Get current user from context - patient will be set in perform_create
+                request = self.context.get('request')
+                patient = request.user if request else None
+                
+                logger.debug(f"Patient from context: {patient} (ID: {patient.id if patient else 'None'})")
+                
+                if patient:
+                    # First, let's see ALL appointments for this patient on this date
+                    all_patient_appointments = Appointment.objects.filter(
+                        patient=patient,
+                        appointment_date__date=appointment_date.date()
+                    )
+                    logger.debug(f"All patient appointments on {appointment_date.date()}: {all_patient_appointments.count()}")
+                    for app in all_patient_appointments:
+                        logger.debug(f"  - ID={app.id}, Dept={app.department.name}, Status={app.status}, Date={app.appointment_date}")
+                    
+                    # Use EXACT same logic as model validation for consistency
+                    logger.debug(f"Building query: patient={patient.id}, date={appointment_date.date()}, department={department.id}")
+                    
+                    # Use the globally imported Appointment model
+                    same_specialty_appointments = Appointment.objects.filter(
+                        patient=patient,
+                        appointment_date__date=appointment_date.date(),
+                        department=department,
+                        status__in=['pending', 'confirmed', 'in_progress', 'scheduled']
+                    ).exclude(
+                        status__in=['cancelled', 'completed', 'no_show']
+                    )
+                    
+                    logger.debug(f"Count before instance exclusion: {same_specialty_appointments.count()}")
+                    
+                    # Exclude current appointment if updating (use same logic as model)
+                    if self.instance and self.instance.pk:
+                        logger.debug(f"Excluding current instance: {self.instance.pk}")
+                        same_specialty_appointments = same_specialty_appointments.exclude(pk=self.instance.pk)
+                        logger.debug(f"Count after instance exclusion: {same_specialty_appointments.count()}")
+                    
+                    # Force evaluation of the queryset to ensure it's current
+                    duplicate_count = same_specialty_appointments.count()
+                    logger.debug(f"Final duplicate count: {duplicate_count}")
+                    
+                    if duplicate_count > 0:
+                        existing_appointment = same_specialty_appointments.first()
+                        logger.warning(f"Found duplicate appointment {existing_appointment.appointment_id} in {department.name}")
+                        logger.debug(f"Existing appointment details: Date={existing_appointment.appointment_date}, Status={existing_appointment.status}")
+                        
+                        # Use exact same error message format as model validation
+                        error_message = f"You already have a {department.name} appointment on {appointment_date.date().strftime('%B %d, %Y')}. Please choose another date or specialty."
+                        raise serializers.ValidationError({
+                            'appointment_date': error_message
+                        })
+                    else:
+                        logger.debug("No duplicate specialty appointments found")
+                else:
+                    logger.warning("No patient found in context - skipping duplicate check")
         
         # Check if doctor is available at the requested time
         doctor = data.get('doctor')
         if doctor and appointment_date:
-            print(f"CHECKING DOCTOR AVAILABILITY: Doctor ID {doctor.id}")
+            logger.debug(f"Checking doctor availability: Doctor ID {doctor.id}")
             
             # Get appointment duration (default to 30 minutes if not provided)
             duration = data.get('duration', 30)
@@ -843,14 +933,14 @@ class AppointmentSerializer(serializers.ModelSerializer):
             ).exclude(id=self.instance.id if self.instance else None)
             
             if overlapping_appointments.exists():
-                print(f"ERROR: Doctor is not available at the requested time. Found {overlapping_appointments.count()} overlapping appointments")
+                logger.warning(f"Doctor is not available at the requested time. Found {overlapping_appointments.count()} overlapping appointments")
                 for app in overlapping_appointments:
-                    print(f"  - Existing appointment: {app.id} at {app.appointment_date}")
+                    logger.debug(f"  - Existing appointment: {app.id} at {app.appointment_date}")
                 raise serializers.ValidationError(
                     "Doctor is not available at the requested time. Please choose another time."
                 )
         
-        print("VALIDATION PASSED SUCCESSFULLY")
+        logger.debug("Validation passed successfully")
         return data
 
 class AppointmentListSerializer(serializers.ModelSerializer):
@@ -1306,10 +1396,10 @@ class StaffCreationSerializer(serializers.ModelSerializer):
                     hospital=hospital,
                     department=validated_data['department']
                 )
-            print(f"DEBUG: Successfully created base user: {staff_user}")
+            logger.debug(f"Successfully created base user: {staff_user}")
             return staff_user
         except Exception as e:
-            print(f"DEBUG: Error creating staff member: {str(e)}")
+            logger.error(f"Error creating staff member: {str(e)}")
             raise serializers.ValidationError(f"Failed to create staff member: {str(e)}")
 
     
@@ -1317,16 +1407,16 @@ class StaffCreationSerializer(serializers.ModelSerializer):
         """
         Validate that the department belongs to the user's hospital
         """
-        print(f"DEBUG: Validating staff creation data: {data}")
+        logger.debug(f"Validating staff creation data: {data}")
         user = self.context['request'].user
-        print(f"DEBUG: Current user: {user}, is admin: {hasattr(user, 'hospital_admin_profile')}")
+        logger.debug(f"Current user: {user}, is admin: {hasattr(user, 'hospital_admin_profile')}")
         
         if not hasattr(user, 'hospital_admin_profile'):
             raise serializers.ValidationError("Only hospital admins can create staff")
             
         department = data.get('department')
-        print(f"DEBUG: Selected department: {department}, department hospital: {department.hospital if department else None}")
-        print(f"DEBUG: User's hospital: {user.hospital_admin_profile.hospital if hasattr(user, 'hospital_admin_profile') else None}")
+        logger.debug(f"Selected department: {department}, department hospital: {department.hospital if department else None}")
+        logger.debug(f"User's hospital: {user.hospital_admin_profile.hospital if hasattr(user, 'hospital_admin_profile') else None}")
         
         if not department.hospital == user.hospital_admin_profile.hospital:
             raise serializers.ValidationError("Department must belong to your hospital")
@@ -1424,7 +1514,7 @@ class StaffSerializer(serializers.ModelSerializer):
                 return datetime.combine(now.date() + timedelta(days=1), start)
                 
         except Exception as e:
-            print(f"Error calculating next slot: {e}")
+            logger.error(f"Error calculating next slot: {e}")
             return None
 
 
@@ -1519,7 +1609,7 @@ class PatientAdmissionSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'admission_id', 'length_of_stay_days']
         
     def to_internal_value(self, data):
-        print(f"Incoming data: {data}")
+        logger.debug(f"Patient admission incoming data: {data}")
         # Map hospital_id to hospital and department_id to department
         if 'hospital_id' in data:
             data['hospital'] = data.pop('hospital_id')
@@ -1534,7 +1624,7 @@ class PatientAdmissionSerializer(serializers.ModelSerializer):
         if assign_bed:
             result._assign_bed_on_create = True
             
-        print(f"After internal value: {result}")
+        logger.debug(f"After internal value: {result}")
         return result
     
     def get_patient_name(self, obj):
@@ -1561,9 +1651,9 @@ class PatientAdmissionSerializer(serializers.ModelSerializer):
         return obj.current_length_of_stay
         
     def to_internal_value(self, data):
-        print(f"Incoming data: {data}")
+        logger.debug(f"Patient admission detailed incoming data: {data}")
         result = super().to_internal_value(data)
-        print(f"After internal value: {result}")
+        logger.debug(f"After internal value: {result}")
         return result
 
 class PatientTransferSerializer(serializers.Serializer):
@@ -1611,4 +1701,55 @@ class DepartmentSerializer(serializers.ModelSerializer):
     def validate_name(self, value):
         """Ensure department name is properly formatted"""
         return value.strip().title()
+
+
+class PaymentTransactionSerializer(serializers.ModelSerializer):
+    """Serializer for PaymentTransaction model"""
+    appointment_id = serializers.CharField(source='appointment.id', read_only=True)
+    patient_name = serializers.SerializerMethodField()
+    hospital_name = serializers.CharField(source='hospital.name', read_only=True)
+    amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    status_display = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = PaymentTransaction
+        fields = [
+            'transaction_id',
+            'appointment_id',
+            'patient_name',
+            'hospital_name',
+            'amount',
+            'amount_display',
+            'currency',
+            'payment_method',
+            'payment_status',
+            'status_display',
+            'payment_provider',
+            'provider_reference',
+            'gateway_transaction_id',
+            'created_at',
+            'completed_at',
+            'description'
+        ]
+        read_only_fields = [
+            'transaction_id', 'provider_reference', 'gateway_transaction_id',
+            'created_at', 'completed_at'
+        ]
+    
+    def get_patient_name(self, obj):
+        """Get patient's full name"""
+        if obj.patient:
+            return f"{obj.patient.first_name} {obj.patient.last_name}"
+        return None
+    
+    def get_status_display(self, obj):
+        """Get human-readable status"""
+        status_map = {
+            'pending': 'Pending Payment',
+            'processing': 'Processing',
+            'completed': 'Payment Successful',
+            'failed': 'Payment Failed',
+            'refunded': 'Refunded'
+        }
+        return status_map.get(obj.payment_status, obj.payment_status)
         

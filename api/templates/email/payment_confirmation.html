@@ -1,70 +1,349 @@
-{% extends "email/base_email.html" %}
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="x-apple-disable-message-reformatting">
+    <title>{% if has_appointment %}Appointment Confirmed{% else %}Payment Received{% endif %} - {{ hospital_name }}</title>
+    
+    <!--[if mso]>
+    <noscript>
+        <xml>
+            <o:OfficeDocumentSettings>
+                <o:PixelsPerInch>96</o:PixelsPerInch>
+            </o:OfficeDocumentSettings>
+        </xml>
+    </noscript>
+    <![endif]-->
+    
+    <link href="https://fonts.googleapis.com/css2?family=UberMoveText:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        /* Email Client Compatibility - Force HTML Display */
+        .ExternalClass {width: 100%;}
+        .ExternalClass, .ExternalClass p, .ExternalClass span, .ExternalClass font, .ExternalClass td, .ExternalClass div {line-height: 100%;}
+        #outlook a {padding: 0;}
+        .ReadMsgBody {width: 100%;}
+        .ExternalClass {width: 100%;}
+        
+        /* Global Styles */
+        body {
+            margin: 0 !important;
+            padding: 0 !important;
+            font-family: 'UberMoveText', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            background-color: #f7f7f7 !important; /* Light grey background similar to Uber */
+            color: #333333 !important;
+            width: 100% !important;
+            min-width: 100% !important;
+        }
 
-{% block title %}Payment Confirmation - {{ appointment_id }}{% endblock %}
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff; /* White background for the main content area */
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.05); /* Subtle shadow for depth */
+        }
 
-{% block content %}
-<tr>
-    <td class="content-cell">
-        <div class="f-fallback">
-            <h1>Hello {{ patient_name }},</h1>
-            <p>Thank you for your payment. Your appointment has been fully confirmed.</p>
-            
-            <table class="attributes" width="100%" cellpadding="0" cellspacing="0" role="presentation">
-                <tr>
-                    <td class="attributes_content">
-                        <table width="100%" cellpadding="0" cellspacing="0" role="presentation">
-                            <tr>
-                                <td class="attributes_item">
-                                    <span class="f-fallback">
-                                        <strong>Appointment ID:</strong> {{ appointment_id }}
-                                    </span>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="attributes_item">
-                                    <span class="f-fallback">
-                                        <strong>Payment Status:</strong> {{ payment_status }}
-                                    </span>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="attributes_item">
-                                    <span class="f-fallback">
-                                        <strong>Appointment Date:</strong> {{ appointment_date|date:"l, F j, Y" }} at {{ appointment_date|time:"g:i A" }}
-                                    </span>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="attributes_item">
-                                    <span class="f-fallback">
-                                        <strong>Doctor:</strong> {{ doctor_name }}
-                                    </span>
-                                </td>
-                            </tr>
-                            <tr>
-                                <td class="attributes_item">
-                                    <span class="f-fallback">
-                                        <strong>Hospital:</strong> {{ hospital_name }}
-                                    </span>
-                                </td>
-                            </tr>
-                        </table>
-                    </td>
-                </tr>
-            </table>
+        .content {
+            padding: 0 24px; /* Consistent padding for content */
+        }
 
-            <p>Your appointment is now fully confirmed. Please remember:</p>
-            <ul>
-                <li>Arrive 15 minutes before your scheduled time</li>
-                <li>Bring your appointment ID for reference</li>
-                <li>Bring any relevant medical records</li>
-                <li>A copy of this receipt will be available in your account</li>
-            </ul>
+        /* Reusable Components */
+        .text-center { text-align: center; }
+        .text-left { text-align: left; }
+        .text-right { text-align: right; }
+        .color-black { color: #000000; }
+        .color-grey { color: #666666; }
+        .color-uber-blue { color: #007bff; } /* A general "Uber blue" for links/accents */
+        .font-bold { font-weight: 700; }
+        .font-medium { font-weight: 500; }
+        .font-normal { font-weight: 400; }
+        .font-large { font-size: 24px; }
+        .font-medium-size { font-size: 18px; }
+        .font-small { font-size: 14px; }
+        .line-height-1-5 { line-height: 1.5; }
+        .mt-20 { margin-top: 20px; }
+        .mb-20 { margin-bottom: 20px; }
+        .py-20 { padding-top: 20px; padding-bottom: 20px; }
+        .py-15 { padding-top: 15px; padding-bottom: 15px; }
+        .px-20 { padding-left: 20px; padding-right: 20px; }
+        .border-bottom { border-bottom: 1px solid #eeeeee; }
 
-            <p>If you need to cancel or reschedule, please do so at least 24 hours in advance to be eligible for a refund according to our policy.</p>
-            
-            <p>Thank you for choosing {{ hospital_name }}!</p>
+        /* Specific Sections */
+        .header {
+            padding: 30px 24px 20px 24px;
+            border-bottom: 1px solid #eeeeee;
+            background-color: #000000; /* Black header background like Uber */
+            color: #ffffff; /* White text for header */
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 700;
+        }
+        .header p {
+            margin: 8px 0 0 0;
+            font-size: 16px;
+            color: #cccccc;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #000000;
+            margin-bottom: 15px;
+        }
+
+        .detail-row {
+            padding: 12px 0;
+            border-bottom: 1px solid #f2f2f2;
+        }
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+        .detail-label {
+            color: #666666;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+        .detail-value {
+            color: #333333;
+            font-weight: 500;
+            font-size: 16px;
+        }
+
+        .total-amount-section {
+            background-color: #f7f7f7;
+            padding: 20px 24px;
+            text-align: center;
+            border-bottom: 1px solid #eeeeee;
+        }
+        .total-amount-section .label {
+            font-size: 14px;
+            color: #666666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+        .total-amount-section .amount {
+            font-size: 36px;
+            font-weight: 700;
+            color: #000000;
+            margin: 0;
+        }
+
+        .button {
+            display: inline-block;
+            padding: 12px 25px;
+            margin-top: 25px;
+            background-color: #000000; /* Uber's primary button color */
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: 700;
+            font-size: 16px;
+            text-transform: uppercase;
+        }
+        .button.secondary {
+            background-color: #f2f2f2;
+            color: #333333;
+        }
+
+        .footer {
+            padding: 30px 24px;
+            text-align: center;
+            color: #999999;
+            font-size: 12px;
+            border-top: 1px solid #eeeeee;
+        }
+        .footer a {
+            color: #007bff; /* Uber blue for links in footer */
+            text-decoration: none;
+        }
+
+        .status-badge {
+            background-color: #28a745; /* Green for success */
+            color: white;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .email-container {
+                width: 100% !important;
+                margin: 0 !important;
+                box-shadow: none !important;
+            }
+            .content {
+                padding: 0 15px !important;
+            }
+            .header {
+                padding: 20px 15px !important;
+            }
+            .total-amount-section {
+                padding: 15px !important;
+            }
+            .total-amount-section .amount {
+                font-size: 30px !important;
+            }
+            .button {
+                width: 90%;
+                box-sizing: border-box;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Gmail HTML Preference Marker -->
+    <div style="display:none;font-size:1px;color:#333333;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">
+        {% if has_appointment %}✅ Your appointment is confirmed! Payment processed successfully.{% else %}💳 Payment received! Your appointment details are being prepared.{% endif %}
+    </div>
+    
+    <div class="email-container">
+        <div class="header text-center">
+            {% if has_appointment %}
+                <h1 style="color: #ffffff;">Appointment Confirmed</h1>
+                <p>Hello {{ patient_name }}, your appointment is confirmed!</p>
+            {% else %}
+                <h1 style="color: #ffffff;">Payment Received</h1>
+                <p>Hello {{ patient_name }}, we've received your payment.</p>
+            {% endif %}
+            <p style="margin-top: 15px; font-size: 14px; color: #aaaaaa;">
+                {% if has_appointment %}
+                    Your payment has been processed and your appointment is fully confirmed.
+                {% else %}
+                    We've received your payment and will confirm your appointment details shortly.
+                {% endif %}
+            </p>
         </div>
-    </td>
-</tr>
-{% endblock %} 
+
+        <div class="content">
+            <div style="padding: 25px 0;">
+                <h2 class="section-title text-center">Your {% if has_appointment %}Appointment{% else %}Payment{% endif %} Summary</h2>
+
+                <div class="total-amount-section">
+                    <p class="label">Total Amount</p>
+                    <h3 class="amount">{{ currency }} {{ amount }}</h3>
+                </div>
+
+                <div style="padding: 24px 0;">
+                    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
+                        <tr>
+                            <td class="detail-row">
+                                <div class="detail-label">Payment ID</div>
+                                <div class="detail-value" style="font-family: monospace;">{{ payment_id }}</div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="detail-row">
+                                <div class="detail-label">Payment Date</div>
+                                <div class="detail-value">{{ payment_date|date:"l, F j, Y \a\t g:i A" }}</div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="detail-row">
+                                <div class="detail-label">Payment Method</div>
+                                <div class="detail-value">{{ payment_method }} ({{ payment_provider }})</div>
+                            </td>
+                        </tr>
+                        {% if has_appointment %}
+                        <tr>
+                            <td class="detail-row">
+                                <div class="detail-label">Appointment ID</div>
+                                <div class="detail-value" style="font-family: monospace;">{{ appointment_id }}</div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="detail-row">
+                                <div class="detail-label">Appointment Date & Time</div>
+                                <div class="detail-value">{{ appointment_date|date:"l, F j, Y \a\t g:i A" }}</div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="detail-row">
+                                <div class="detail-label">Doctor</div>
+                                <div class="detail-value">{{ doctor_name }}</div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td class="detail-row">
+                                <div class="detail-label">Department</div>
+                                <div class="detail-value">{{ department_name }}</div>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        <tr>
+                            <td class="detail-row">
+                                <div class="detail-label">Hospital</div>
+                                <div class="detail-value">{{ hospital_name }}</div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px 0;">
+                                <div class="detail-label">Payment Status</div>
+                                <div class="status-badge">{{ payment_status }}</div>
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+
+            <div style="padding: 25px 0; background-color: #ffffff;">
+                {% if has_appointment %}
+                    <h2 class="section-title">Important Reminders</h2>
+                    <ul style="list-style: none; padding: 0; margin: 0; color: #333333; line-height: 1.6;">
+                        <li style="margin-bottom: 10px;">• Arrive 15 minutes before your scheduled time</li>
+                        <li style="margin-bottom: 10px;">• Bring your appointment ID for reference</li>
+                        <li style="margin-bottom: 10px;">• Bring any relevant medical records</li>
+                        <li>• A copy of this receipt will be available in your account</li>
+                    </ul>
+
+                    <div style="background-color: #fff3cd; border-left: 5px solid #ffc107; padding: 15px 20px; margin-top: 20px; border-radius: 4px;">
+                        <p style="margin: 0; color: #664d03; font-size: 14px;">
+                            <strong>Cancellation Policy:</strong> Please cancel or reschedule at least 24 hours in advance to be eligible for a refund according to our policy.
+                        </p>
+                    </div>
+                    <div class="text-center" style="margin-top: 30px;">
+                        <a href="#" class="button">Manage My Appointment</a>
+                    </div>
+                {% else %}
+                    <h2 class="section-title">What Happens Next</h2>
+                    <ul style="list-style: none; padding: 0; margin: 0; color: #333333; line-height: 1.6;">
+                        <li style="margin-bottom: 10px;">• We'll review your payment and health requirements.</li>
+                        <li style="margin-bottom: 10px;">• We'll assign the most suitable doctor for your needs.</li>
+                        <li style="margin-bottom: 10px;">• We'll send you a separate email with your confirmed appointment details.</li>
+                        <li>• Expect your appointment confirmation within the next 24 hours.</li>
+                    </ul>
+
+                    <div style="background-color: #d1e7dd; border-left: 5px solid #198754; padding: 15px 20px; margin-top: 20px; border-radius: 4px;">
+                        <p style="margin: 0; color: #0f5132; font-size: 14px;">
+                            <strong>Guarantee:</strong> Your payment is secure and you're guaranteed an appointment. We'll be in touch soon!
+                        </p>
+                    </div>
+                    <div class="text-center" style="margin-top: 30px;">
+                        <a href="#" class="button">View My Payments</a>
+                    </div>
+                {% endif %}
+            </div>
+
+            <div class="footer">
+                <p style="margin: 0 0 10px 0; color: #666666; font-size: 14px; font-weight: 500;">Thank you for choosing {{ hospital_name }}!</p>
+                <p style="margin: 0; color: #999999; font-size: 12px;">We're committed to providing you with excellent healthcare service.</p>
+                <p style="margin-top: 15px;">
+                    <a href="#" style="color: #007bff;">Help Center</a> |
+                    <a href="#" style="color: #007bff;">Privacy Policy</a> |
+                    <a href="#" style="color: #007bff;">Terms of Service</a>
+                </p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,4 +1,12 @@
 #!/usr/bin/env python
+"""
+PHB Hospital System - Backend API
+Copyright (c) 2025 ERUWA NINIORITSE GREAT (Public Health Bureau)
+
+Licensed under CC BY-NC-SA 4.0
+Commercial use is strictly prohibited.
+See LICENSE file for details.
+"""
 """Django's command-line utility for administrative tasks."""
 import os
 import sys

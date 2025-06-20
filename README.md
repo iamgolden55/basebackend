@@ -1,4 +1,25 @@
-# BaseBackend Healthcare System
+# PHB Hospital System - Backend
+
+[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
+[![Django](https://img.shields.io/badge/Django-4.2+-green.svg)](https://djangoproject.com)
+[![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
+
+## ⚖️ **IMPORTANT: NON-COMMERCIAL LICENSE**
+
+**This software is licensed under CC BY-NC-SA 4.0 - Commercial use is strictly prohibited.**
+
+- ✅ **Educational and personal use allowed**
+- ✅ **Must provide attribution to Golden/PHB**
+- ✅ **Must share improvements under same license**
+- ❌ **NO commercial use without explicit written permission**
+- ⚖️ **Violations subject to legal action and damages**
+
+For commercial licensing inquiries, contact the copyright holder.
+
+## 🏥 About PHB Hospital System
+
+Advanced hospital management system built with Django, featuring comprehensive patient care, medical records, appointment scheduling, and payment integration.
 
 ## Docker Setup Guide
 
@@ -115,3 +136,11 @@ docker-compose down -v
 2. **Redis connection issues**
    - Ensure the Redis container is running: `docker-compose ps`
    - Check the Redis URL configuration
+
+## 📄 License
+
+Copyright (c) 2025 Golden (Public Health Bureau)
+
+This project is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License. See the [LICENSE](LICENSE) file for details.
+
+**Commercial use is strictly prohibited.** Contact the copyright holder for commercial licensing.
