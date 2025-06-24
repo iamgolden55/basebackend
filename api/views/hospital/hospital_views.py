@@ -150,25 +150,63 @@ class ApproveHospitalRegistrationView(APIView):
     permission_classes = [IsAuthenticated]
     
     def post(self, request, registration_id):
+        print("\n=== Hospital Registration Approval Debug ===")
+        print("\n=== Request Details ===")
+        print(f"Method: {request.method}")
+        print(f"Headers: {dict(request.headers)}")
+        print(f"Query Params: {request.query_params}")
+        print(f"Data: {request.data}")
+        print(f"User: {request.user}")
+        print(f"User Email: {request.user.email}")
+        print(f"User Role: {request.user.role}")
+        print(f"User Hospital: {request.user.hospital.name if hasattr(request.user, 'hospital') and request.user.hospital else 'None'}")
+        print(f"User Hospital ID: {request.user.hospital.id if hasattr(request.user, 'hospital') and request.user.hospital else 'None'}")
+        print("\n=== Registered Hospitals ===")
+        # Get all registered hospitals (not just approved ones)
+        registered_hospitals = request.user.get_registered_hospitals()
+        print(f"Registered Hospitals: {len(registered_hospitals)}")
+        
+        # Print each registered hospital
+        for reg in registered_hospitals:
+            print(f"- {reg.hospital.name} (ID: {reg.hospital.id}) - Status: {reg.status}")
+            
+        # Get the first approved hospital if any
+        approved_hospital = registered_hospitals.filter(status='approved').first()
+        print(f"\nFirst Approved Hospital: {approved_hospital.hospital.name if approved_hospital else 'None'}")
+        print(f"\nPrimary Hospital: {request.user.hospital.name if hasattr(request.user, 'hospital') and request.user.hospital else 'None'}")
+        
         # Get the registration
         registration = get_object_or_404(HospitalRegistration, id=registration_id)
+        print("\n=== Registration Details ===")
+        print(f"Registration ID: {registration.id}")
+        print(f"Registration hospital: {registration.hospital.name}")
+        print(f"Registration hospital ID: {registration.hospital.id}")
+        print(f"Registration user: {registration.user.email}")
+        print(f"Registration status: {registration.status}")
+        print(f"Registration created: {registration.created_at}")
+        print(f"Registration approved date: {registration.approved_date}")
         
         # Check if user is hospital admin
         if request.user.role != 'hospital_admin':
+            print("❌ User is not a hospital admin")
             return Response({
                 "error": "Only hospital administrators can approve registrations! 🚫"
             }, status=status.HTTP_403_FORBIDDEN)
             
         # Check if user is admin of this specific hospital
-        if request.user.hospital != registration.hospital:
+        user_hospital = request.user.hospital
+        user_hospital_id = user_hospital.id if user_hospital else None
+        
+        approved_hospital_id = approved_hospital.hospital.id if approved_hospital else None
+        
+        if user_hospital_id == registration.hospital.id or approved_hospital_id == registration.hospital.id:
+            
+        
+            print("✅ All checks passed, proceeding with approval")
+            # Approve the registration
+            registration.approve_registration()
+
             return Response({
-                "error": "You can only approve registrations for your hospital! 🏥"
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        # Approve the registration
-        registration.approve_registration()
-        
-        return Response({
             "message": "Registration approved successfully! 🎉",
             "registration": {
                 "id": registration.id,
@@ -177,7 +215,19 @@ class ApproveHospitalRegistrationView(APIView):
                 "status": "approved",
                 "approved_date": registration.approved_date
             }
-        }, status=status.HTTP_200_OK)    
+        }, status=status.HTTP_200_OK)
+        
+            
+
+        print("❌ User is not admin of this hospital")
+        print(f"User's hospital: {user_hospital.name if user_hospital else 'None'}")
+        print(f"Registration hospital: {registration.hospital.name}")
+        print(f"User's hospital ID: {user_hospital_id}")
+        print(f"Approved hospital ID: {approved_hospital_id}")
+        print(f"Registration hospital ID: {registration.hospital.id}")
+        return Response({
+            "error": "You can only approve registrations for your hospital! 🏥"
+        }, status=status.HTTP_403_FORBIDDEN)  
 
 class HospitalAdminRegistrationView(generics.CreateAPIView):
     permission_classes = [AllowAny]  # Initially allow anyone, but you might want to restrict this
