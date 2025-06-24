@@ -264,6 +264,33 @@ class SecureFileUploadView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
     
+    def _get_simple_file_type(self, mime_type):
+        """Map MIME types to simple categories that fit in 20 chars"""
+        if not mime_type:
+            return 'other'
+        
+        mime_type = mime_type.lower()
+        
+        # Image types
+        if mime_type.startswith('image/'):
+            return 'image'
+        
+        # Document types
+        if any(doc_type in mime_type for doc_type in [
+            'pdf', 'word', 'document', 'text', 'rtf'
+        ]):
+            return 'document'
+        
+        # Audio types
+        if mime_type.startswith('audio/'):
+            return 'audio'
+        
+        # Video types  
+        if mime_type.startswith('video/'):
+            return 'video'
+        
+        return 'other'
+    
     def post(self, request):
         """Handle secure file upload with JWT authentication"""
         
@@ -383,7 +410,7 @@ class SecureFileUploadView(APIView):
                         original_filename=uploaded_file.name,
                         secure_filename=secure_filename,
                         file_extension=file_ext,
-                        file_type=validation_result['file_info'].get('mime_type', 'unknown'),
+                        file_type=self._get_simple_file_type(validation_result['file_info'].get('mime_type', 'unknown')),
                         file_size=len(file_content),
                         encryption_key_id=encryption_result['key_id'],
                         is_encrypted=True,
