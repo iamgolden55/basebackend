@@ -23,7 +23,15 @@ from .models import (
     StaffTransfer,
     DepartmentEmergency,
     DocumentAccessLog,
-    DocumentShare
+    DocumentShare,
+    # Women's Health Models
+    WomensHealthProfile,
+    MenstrualCycle,
+    PregnancyRecord,
+    FertilityTracking,
+    HealthGoal,
+    DailyHealthLog,
+    HealthScreening
 )
 # from .models.medical.hospital_auth import HospitalAdmin
 
@@ -33,7 +41,8 @@ class CustomUserAdmin(UserAdmin):
         ('Personal info', {'fields': ('first_name', 'last_name', 'date_of_birth', 
                                     'phone', 'gender', 'state', 'country', 'city')}),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 
-                                  'groups', 'user_permissions', 'has_completed_onboarding')}),  # Added here
+                                  'groups', 'user_permissions', 'has_completed_onboarding')}),
+        ('Women\'s Health', {'fields': ('womens_health_verified', 'womens_health_verification_date')}),
         ('Important dates', {'fields': ('last_login', 'date_joined')}),
     )
     add_fieldsets = (
@@ -269,3 +278,313 @@ class DocumentShareAdmin(admin.ModelAdmin):
     permission_classes = [IsAuthenticated, IsMedicalStaff]
     list_display = ['document', 'shared_by']
     search_fields = ['document__original_filename', 'shared_by__first_name']
+
+# ======================== WOMEN'S HEALTH ADMIN ========================
+
+# Women's Health Profile Admin
+@admin.register(WomensHealthProfile)
+class WomensHealthProfileAdmin(admin.ModelAdmin):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsMedicalStaff]
+    list_display = ['user', 'pregnancy_status', 'current_contraception', 'fertility_tracking_enabled', 'profile_completion_percentage']
+    list_filter = ['pregnancy_status', 'current_contraception', 'fertility_tracking_enabled', 'pcos', 'endometriosis']
+    search_fields = ['user__first_name', 'user__last_name', 'user__email']
+    readonly_fields = ['profile_completion_percentage', 'current_cycle_day', 'estimated_ovulation_date', 'estimated_next_period']
+    
+    fieldsets = (
+        ('User Information', {
+            'fields': ('user',)
+        }),
+        ('Reproductive Health', {
+            'fields': ('age_at_menarche', 'average_cycle_length', 'average_period_duration', 'last_menstrual_period')
+        }),
+        ('Pregnancy Status', {
+            'fields': ('pregnancy_status', 'current_pregnancy_week', 'estimated_due_date')
+        }),
+        ('Pregnancy History', {
+            'fields': ('total_pregnancies', 'live_births', 'miscarriages', 'abortions')
+        }),
+        ('Contraception', {
+            'fields': ('current_contraception', 'contraception_start_date')
+        }),
+        ('Fertility Tracking', {
+            'fields': ('fertility_tracking_enabled', 'temperature_tracking', 'cervical_mucus_tracking', 'ovulation_test_tracking')
+        }),
+        ('Health Conditions', {
+            'fields': ('pcos', 'endometriosis', 'fibroids', 'thyroid_disorder', 'diabetes', 'gestational_diabetes_history', 'hypertension')
+        }),
+        ('Family History', {
+            'fields': ('family_history_breast_cancer', 'family_history_ovarian_cancer', 'family_history_cervical_cancer', 'family_history_diabetes', 'family_history_heart_disease')
+        }),
+        ('Lifestyle', {
+            'fields': ('exercise_frequency', 'stress_level', 'sleep_quality')
+        }),
+        ('Medical Care', {
+            'fields': ('primary_gynecologist', 'last_pap_smear', 'last_mammogram', 'last_gynecological_exam')
+        }),
+        ('Calculated Fields', {
+            'fields': ('profile_completion_percentage', 'current_cycle_day', 'estimated_ovulation_date', 'estimated_next_period'),
+            'classes': ('collapse',)
+        })
+    )
+
+# Menstrual Cycle Admin
+@admin.register(MenstrualCycle)
+class MenstrualCycleAdmin(admin.ModelAdmin):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsMedicalStaff]
+    list_display = ['womens_health_profile', 'cycle_start_date', 'cycle_length', 'period_length', 'flow_intensity', 'is_current_cycle', 'data_completeness_score']
+    list_filter = ['flow_intensity', 'is_current_cycle', 'is_regular', 'conception_attempt', 'hormonal_contraception']
+    search_fields = ['womens_health_profile__user__first_name', 'womens_health_profile__user__last_name']
+    readonly_fields = ['cycle_day', 'days_until_ovulation', 'is_in_fertile_window', 'cycle_phase', 'data_completeness_score']
+    date_hierarchy = 'cycle_start_date'
+    ordering = ['-cycle_start_date']
+
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('womens_health_profile', 'cycle_start_date', 'cycle_end_date', 'period_end_date')
+        }),
+        ('Cycle Characteristics', {
+            'fields': ('cycle_length', 'period_length', 'flow_intensity', 'is_regular', 'cycle_quality_score')
+        }),
+        ('Ovulation', {
+            'fields': ('ovulation_date', 'ovulation_confirmed', 'ovulation_detection_method')
+        }),
+        ('Pregnancy Testing', {
+            'fields': ('pregnancy_test_taken', 'pregnancy_test_result', 'pregnancy_test_date', 'conception_attempt')
+        }),
+        ('Medications', {
+            'fields': ('medications_taken', 'supplements_taken', 'hormonal_contraception')
+        }),
+        ('Lifestyle Factors', {
+            'fields': ('stress_level', 'exercise_frequency', 'travel_during_cycle', 'illness_during_cycle')
+        }),
+        ('Calculated Fields', {
+            'fields': ('cycle_day', 'days_until_ovulation', 'is_in_fertile_window', 'cycle_phase', 'data_completeness_score'),
+            'classes': ('collapse',)
+        }),
+        ('Status', {
+            'fields': ('is_current_cycle', 'predicted_cycle')
+        })
+    )
+
+# Pregnancy Record Admin
+@admin.register(PregnancyRecord)
+class PregnancyRecordAdmin(admin.ModelAdmin):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsMedicalStaff]
+    list_display = ['womens_health_profile', 'pregnancy_number', 'pregnancy_status', 'estimated_due_date', 'gestational_age_at_completion', 'is_current_pregnancy']
+    list_filter = ['pregnancy_status', 'pregnancy_type', 'conception_method', 'risk_level', 'is_current_pregnancy']
+    search_fields = ['womens_health_profile__user__first_name', 'womens_health_profile__user__last_name']
+    readonly_fields = ['current_gestational_age', 'trimester', 'days_until_due_date', 'is_high_risk']
+    date_hierarchy = 'pregnancy_start_date'
+    ordering = ['-pregnancy_number']
+
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('womens_health_profile', 'pregnancy_number', 'is_current_pregnancy')
+        }),
+        ('Pregnancy Timeline', {
+            'fields': ('last_menstrual_period', 'estimated_due_date', 'conception_date', 'pregnancy_start_date')
+        }),
+        ('Pregnancy Details', {
+            'fields': ('pregnancy_type', 'conception_method', 'pregnancy_status', 'completion_date', 'gestational_age_at_completion')
+        }),
+        ('Risk Assessment', {
+            'fields': ('risk_level', 'risk_factors')
+        }),
+        ('Prenatal Care', {
+            'fields': ('first_prenatal_visit_date', 'first_prenatal_visit_week', 'total_prenatal_visits', 'adequate_prenatal_care')
+        }),
+        ('Healthcare Providers', {
+            'fields': ('primary_obstetrician', 'hospital_for_delivery', 'midwife_care', 'doula_support')
+        }),
+        ('Complications', {
+            'fields': ('pregnancy_complications', 'gestational_diabetes', 'preeclampsia', 'placenta_previa', 'preterm_labor_risk')
+        }),
+        ('Delivery Information', {
+            'fields': ('delivery_type', 'delivery_location', 'labor_duration_hours', 'delivery_complications')
+        }),
+        ('Birth Outcomes', {
+            'fields': ('birth_weight_grams', 'birth_length_cm', 'head_circumference_cm', 'apgar_1_minute', 'apgar_5_minute')
+        }),
+        ('Calculated Fields', {
+            'fields': ('current_gestational_age', 'trimester', 'days_until_due_date', 'is_high_risk'),
+            'classes': ('collapse',)
+        })
+    )
+
+# Fertility Tracking Admin
+@admin.register(FertilityTracking)
+class FertilityTrackingAdmin(admin.ModelAdmin):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsMedicalStaff]
+    list_display = ['womens_health_profile', 'date', 'cycle_day', 'basal_body_temperature', 'cervical_mucus_type', 'ovulation_test_result', 'fertility_score', 'data_completeness_score']
+    list_filter = ['cervical_mucus_type', 'ovulation_test_result', 'pregnancy_test_result', 'intercourse', 'trying_to_conceive']
+    search_fields = ['womens_health_profile__user__first_name', 'womens_health_profile__user__last_name']
+    readonly_fields = ['is_potential_ovulation_day', 'fertility_score', 'data_completeness_score']
+    date_hierarchy = 'date'
+    ordering = ['-date']
+
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('womens_health_profile', 'date', 'cycle_day')
+        }),
+        ('Basal Body Temperature', {
+            'fields': ('basal_body_temperature', 'bbt_time_taken', 'bbt_method', 'bbt_disrupted', 'bbt_disruption_reason')
+        }),
+        ('Cervical Mucus', {
+            'fields': ('cervical_mucus_type', 'cervical_mucus_amount', 'cervical_mucus_stretchy', 'cervical_mucus_notes')
+        }),
+        ('Cervical Position', {
+            'fields': ('cervical_position_height', 'cervical_position_firmness', 'cervical_position_opening')
+        }),
+        ('Ovulation Tests', {
+            'fields': ('ovulation_test_taken', 'ovulation_test_result', 'ovulation_test_time', 'ovulation_test_brand', 'lh_level')
+        }),
+        ('Pregnancy Tests', {
+            'fields': ('pregnancy_test_taken', 'pregnancy_test_result', 'pregnancy_test_time', 'pregnancy_test_brand')
+        }),
+        ('Sexual Activity', {
+            'fields': ('intercourse', 'protected_intercourse', 'intercourse_times', 'trying_to_conceive')
+        }),
+        ('Symptoms', {
+            'fields': ('symptoms', 'ovulation_pain', 'ovulation_pain_side', 'breast_tenderness', 'spotting', 'spotting_color')
+        }),
+        ('Calculated Fields', {
+            'fields': ('is_potential_ovulation_day', 'fertility_score', 'data_completeness_score'),
+            'classes': ('collapse',)
+        })
+    )
+
+# Health Goal Admin
+@admin.register(HealthGoal)
+class HealthGoalAdmin(admin.ModelAdmin):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsMedicalStaff]
+    list_display = ['title', 'womens_health_profile', 'category', 'status', 'priority', 'progress_percentage', 'current_streak', 'target_date']
+    list_filter = ['category', 'status', 'priority', 'goal_type', 'is_template_based', 'recommended_by_professional']
+    search_fields = ['title', 'womens_health_profile__user__first_name', 'womens_health_profile__user__last_name']
+    readonly_fields = ['progress_percentage', 'current_streak', 'longest_streak', 'days_since_start', 'days_until_target', 'is_overdue']
+    date_hierarchy = 'start_date'
+    ordering = ['-created_at']
+
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('womens_health_profile', 'title', 'description', 'category', 'goal_type')
+        }),
+        ('Target and Progress', {
+            'fields': ('target_value', 'current_value', 'unit_of_measurement', 'target_frequency', 'frequency_period', 'current_frequency')
+        }),
+        ('Timeline', {
+            'fields': ('start_date', 'target_date', 'completed_date', 'status', 'priority')
+        }),
+        ('Progress Tracking', {
+            'fields': ('progress_percentage', 'current_streak', 'longest_streak', 'last_activity_date', 'total_updates')
+        }),
+        ('Reminders', {
+            'fields': ('reminder_enabled', 'reminder_frequency', 'reminder_time')
+        }),
+        ('Motivation', {
+            'fields': ('motivation_note', 'reward_for_completion', 'accountability_partner')
+        }),
+        ('Healthcare Professional', {
+            'fields': ('recommended_by_professional', 'professional_name', 'professional_notes')
+        }),
+        ('Calculated Fields', {
+            'fields': ('days_since_start', 'days_until_target', 'is_overdue'),
+            'classes': ('collapse',)
+        })
+    )
+
+# Daily Health Log Admin
+@admin.register(DailyHealthLog)
+class DailyHealthLogAdmin(admin.ModelAdmin):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsMedicalStaff]
+    list_display = ['womens_health_profile', 'date', 'mood', 'energy_level', 'exercise_performed', 'menstrual_flow', 'health_score', 'data_completeness_score']
+    list_filter = ['mood', 'energy_level', 'exercise_performed', 'menstrual_flow', 'stress_level', 'sleep_quality']
+    search_fields = ['womens_health_profile__user__first_name', 'womens_health_profile__user__last_name']
+    readonly_fields = ['health_score', 'bmi', 'sleep_efficiency', 'data_completeness_score']
+    date_hierarchy = 'date'
+    ordering = ['-date']
+
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('womens_health_profile', 'date')
+        }),
+        ('Physical Health', {
+            'fields': ('weight_kg', 'body_fat_percentage', 'muscle_mass_kg')
+        }),
+        ('Vital Signs', {
+            'fields': ('systolic_bp', 'diastolic_bp', 'heart_rate_bpm', 'resting_heart_rate', 'body_temperature')
+        }),
+        ('Sleep', {
+            'fields': ('sleep_bedtime', 'sleep_wake_time', 'sleep_duration_hours', 'sleep_quality', 'sleep_interrupted')
+        }),
+        ('Nutrition', {
+            'fields': ('water_intake_liters', 'water_goal_met', 'meals_count', 'vegetables_servings', 'fruits_servings')
+        }),
+        ('Exercise', {
+            'fields': ('exercise_performed', 'exercise_duration_minutes', 'exercise_intensity', 'steps_count', 'calories_burned')
+        }),
+        ('Mental Health', {
+            'fields': ('mood', 'stress_level', 'anxiety_level', 'energy_level', 'emotional_wellbeing_score')
+        }),
+        ('Women\'s Health', {
+            'fields': ('menstrual_flow', 'menstrual_cramps', 'cramp_severity', 'breast_tenderness', 'pms_symptoms')
+        }),
+        ('Medications', {
+            'fields': ('medications_taken', 'supplements_taken', 'prenatal_vitamin', 'folic_acid', 'birth_control')
+        }),
+        ('Calculated Fields', {
+            'fields': ('health_score', 'bmi', 'sleep_efficiency', 'data_completeness_score'),
+            'classes': ('collapse',)
+        })
+    )
+
+# Health Screening Admin
+@admin.register(HealthScreening)
+class HealthScreeningAdmin(admin.ModelAdmin):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsMedicalStaff]
+    list_display = ['womens_health_profile', 'screening_type', 'scheduled_date', 'completed_date', 'status', 'result_status', 'next_due_date']
+    list_filter = ['screening_type', 'status', 'result_status', 'provider_type', 'follow_up_required', 'risk_assessment']
+    search_fields = ['womens_health_profile__user__first_name', 'womens_health_profile__user__last_name', 'provider_name', 'clinic_hospital_name']
+    readonly_fields = ['is_due_soon', 'days_until_due', 'days_since_last', 'age_at_screening']
+    date_hierarchy = 'scheduled_date'
+    ordering = ['-scheduled_date']
+
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('womens_health_profile', 'screening_type', 'custom_screening_name')
+        }),
+        ('Scheduling', {
+            'fields': ('scheduled_date', 'appointment_time', 'completed_date', 'next_due_date', 'status')
+        }),
+        ('Healthcare Provider', {
+            'fields': ('provider_name', 'clinic_hospital_name', 'provider_type')
+        }),
+        ('Results', {
+            'fields': ('result_status', 'result_details', 'result_values', 'abnormal_findings', 'recommendations')
+        }),
+        ('Follow-up', {
+            'fields': ('follow_up_required', 'follow_up_type', 'follow_up_date', 'follow_up_notes')
+        }),
+        ('Risk Assessment', {
+            'fields': ('risk_assessment', 'risk_factors_identified')
+        }),
+        ('Frequency and Recurrence', {
+            'fields': ('recommended_frequency_months', 'is_routine', 'reason_for_screening')
+        }),
+        ('Experience', {
+            'fields': ('comfort_level', 'pain_level', 'patient_experience_notes')
+        }),
+        ('Reminders', {
+            'fields': ('reminder_enabled', 'reminder_advance_days', 'last_reminder_sent')
+        }),
+        ('Calculated Fields', {
+            'fields': ('is_due_soon', 'days_until_due', 'days_since_last', 'age_at_screening'),
+            'classes': ('collapse',)
+        })
+    )

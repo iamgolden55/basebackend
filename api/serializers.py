@@ -1752,4 +1752,324 @@ class PaymentTransactionSerializer(serializers.ModelSerializer):
             'refunded': 'Refunded'
         }
         return status_map.get(obj.payment_status, obj.payment_status)
+
+
+# =============================================================================
+# WOMEN'S HEALTH SERIALIZERS
+# =============================================================================
+
+from api.models import (
+    WomensHealthProfile,
+    MenstrualCycle,
+    PregnancyRecord,
+    FertilityTracking,
+    HealthGoal,
+    DailyHealthLog,
+    HealthScreening
+)
+
+
+class WomensHealthProfileSerializer(serializers.ModelSerializer):
+    """Serializer for women's health profile"""
+    
+    # Calculated fields
+    current_cycle_day = serializers.ReadOnlyField()
+    estimated_ovulation_date = serializers.ReadOnlyField()
+    estimated_next_period = serializers.ReadOnlyField()
+    profile_completion_percentage = serializers.ReadOnlyField()
+    
+    # Helper properties
+    is_pregnant = serializers.ReadOnlyField()
+    is_trying_to_conceive = serializers.ReadOnlyField()
+    needs_fertility_tracking = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = WomensHealthProfile
+        fields = [
+            'id', 'user', 'created_at', 'updated_at',
+            'age_at_menarche', 'average_cycle_length', 'average_period_duration', 'last_menstrual_period',
+            'pregnancy_status', 'current_pregnancy_week', 'estimated_due_date',
+            'total_pregnancies', 'live_births', 'miscarriages', 'abortions',
+            'current_contraception', 'contraception_start_date',
+            'fertility_tracking_enabled', 'temperature_tracking', 'cervical_mucus_tracking', 'ovulation_test_tracking',
+            'pcos', 'endometriosis', 'fibroids', 'thyroid_disorder', 'diabetes', 'gestational_diabetes_history', 'hypertension',
+            'family_history_breast_cancer', 'family_history_ovarian_cancer', 'family_history_cervical_cancer',
+            'family_history_diabetes', 'family_history_heart_disease',
+            'exercise_frequency', 'stress_level', 'sleep_quality',
+            'health_goals_list', 'notification_preferences', 'privacy_settings',
+            'primary_gynecologist', 'last_pap_smear', 'last_mammogram', 'last_gynecological_exam',
+            'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
+            'current_cycle_day', 'estimated_ovulation_date', 'estimated_next_period', 'profile_completion_percentage',
+            'is_pregnant', 'is_trying_to_conceive', 'needs_fertility_tracking',
+        ]
+        read_only_fields = [
+            'id', 'user', 'created_at', 'updated_at',
+            'current_cycle_day', 'estimated_ovulation_date', 'estimated_next_period', 'profile_completion_percentage',
+            'is_pregnant', 'is_trying_to_conceive', 'needs_fertility_tracking',
+        ]
+
+
+class MenstrualCycleSerializer(serializers.ModelSerializer):
+    """Serializer for menstrual cycles"""
+    
+    cycle_day = serializers.ReadOnlyField()
+    cycle_phase = serializers.ReadOnlyField()
+    is_in_fertile_window = serializers.ReadOnlyField()
+    data_completeness_score = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = MenstrualCycle
+        fields = '__all__'
+        read_only_fields = ['id', 'womens_health_profile', 'created_at', 'updated_at']
+
+
+class PregnancyRecordSerializer(serializers.ModelSerializer):
+    """Serializer for pregnancy records"""
+    
+    current_gestational_age = serializers.ReadOnlyField()
+    trimester = serializers.ReadOnlyField()
+    days_until_due_date = serializers.ReadOnlyField()
+    is_high_risk = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = PregnancyRecord
+        fields = '__all__'
+        read_only_fields = ['id', 'womens_health_profile', 'created_at', 'updated_at']
+
+
+class FertilityTrackingSerializer(serializers.ModelSerializer):
+    """Serializer for fertility tracking"""
+    
+    fertility_score = serializers.ReadOnlyField()
+    is_potential_ovulation_day = serializers.ReadOnlyField()
+    data_completeness_score = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = FertilityTracking
+        fields = '__all__'
+        read_only_fields = ['id', 'womens_health_profile', 'created_at', 'updated_at']
+
+
+class HealthGoalSerializer(serializers.ModelSerializer):
+    """Serializer for health goals"""
+    
+    progress_percentage = serializers.ReadOnlyField()
+    days_since_start = serializers.ReadOnlyField()
+    days_until_target = serializers.ReadOnlyField()
+    is_overdue = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = HealthGoal
+        fields = '__all__'
+        read_only_fields = ['id', 'womens_health_profile', 'created_at', 'updated_at']
+
+
+class DailyHealthLogSerializer(serializers.ModelSerializer):
+    """Serializer for daily health logs"""
+    
+    health_score = serializers.ReadOnlyField()
+    bmi = serializers.ReadOnlyField()
+    sleep_efficiency = serializers.ReadOnlyField()
+    data_completeness_score = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = DailyHealthLog
+        fields = '__all__'
+        read_only_fields = ['id', 'womens_health_profile', 'created_at', 'updated_at']
+
+
+class HealthScreeningSerializer(serializers.ModelSerializer):
+    """Serializer for health screenings"""
+    
+    is_due_soon = serializers.ReadOnlyField()
+    days_until_due = serializers.ReadOnlyField()
+    days_since_last = serializers.ReadOnlyField()
+    age_at_screening = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = HealthScreening
+        fields = '__all__'
+        read_only_fields = ['id', 'womens_health_profile', 'created_at', 'updated_at']
+
+
+# Clinical Guidelines Serializers
+
+from api.models.medical.clinical_guideline import ClinicalGuideline, GuidelineAccess, GuidelineBookmark
+
+class ClinicalGuidelineSerializer(serializers.ModelSerializer):
+    """Serializer for clinical guidelines with organization and creator information"""
+    
+    organization_name = serializers.CharField(source='organization.name', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    created_by_email = serializers.EmailField(source='created_by.email', read_only=True)
+    approved_by_name = serializers.CharField(source='approved_by.get_full_name', read_only=True)
+    file_url = serializers.SerializerMethodField()
+    download_url = serializers.SerializerMethodField()
+    is_expired = serializers.ReadOnlyField()
+    is_effective = serializers.ReadOnlyField()
+    is_accessible = serializers.ReadOnlyField()
+    
+    # User-specific fields (for bookmarks, etc.)
+    is_bookmarked = serializers.SerializerMethodField()
+    user_notes = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ClinicalGuideline
+        fields = [
+            'id', 'guideline_id', 'title', 'description', 'version',
+            'organization', 'organization_name', 'created_by', 'created_by_name', 'created_by_email',
+            'category', 'specialty', 'keywords', 'content_type', 'text_content',
+            'effective_date', 'expiry_date', 'is_active', 'is_published',
+            'approval_status', 'approved_by', 'approved_by_name', 'approved_at',
+            'created_at', 'updated_at', 'access_count',
+            'target_roles', 'priority', 'file_path',
+            'file_url', 'download_url', 'is_expired', 'is_effective', 'is_accessible',
+            'is_bookmarked', 'user_notes'
+        ]
+        read_only_fields = [
+            'guideline_id', 'created_by', 'organization', 'access_count',
+            'approved_by', 'approved_at', 'created_at', 'updated_at'
+        ]
+    
+    def get_file_url(self, obj):
+        """Get the file URL if a file is attached"""
+        if obj.file_path:
+            return f"/api/clinical-guidelines/{obj.guideline_id}/download/"
+        return None
+    
+    def get_download_url(self, obj):
+        """Get the download URL for the guideline"""
+        return f"/api/clinical-guidelines/{obj.guideline_id}/download/"
+    
+    def get_is_bookmarked(self, obj):
+        """Check if the current user has bookmarked this guideline"""
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return obj.bookmarks.filter(user=request.user, is_active=True).exists()
+        return False
+    
+    def get_user_notes(self, obj):
+        """Get user's notes for this guideline if bookmarked"""
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            bookmark = obj.bookmarks.filter(user=request.user, is_active=True).first()
+            if bookmark:
+                return bookmark.notes
+        return None
+    
+    def validate_effective_date(self, value):
+        """Validate that effective date is not in the past for new guidelines"""
+        if not self.instance and value < timezone.now().date():
+            raise serializers.ValidationError("Effective date cannot be in the past for new guidelines.")
+        return value
+    
+    def validate_expiry_date(self, value):
+        """Validate that expiry date is after effective date"""
+        effective_date = self.initial_data.get('effective_date')
+        if effective_date and value and value <= effective_date:
+            raise serializers.ValidationError("Expiry date must be after effective date.")
+        return value
+    
+    def validate_keywords(self, value):
+        """Validate keywords format"""
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Keywords must be a list.")
+        if len(value) > 20:
+            raise serializers.ValidationError("Maximum 20 keywords allowed.")
+        return value
+    
+    def validate_target_roles(self, value):
+        """Validate target roles"""
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Target roles must be a list.")
         
+        # Valid roles from CustomUser model
+        valid_roles = [choice[0] for choice in CustomUser.ROLES]
+        invalid_roles = [role for role in value if role not in valid_roles]
+        
+        if invalid_roles:
+            raise serializers.ValidationError(f"Invalid roles: {', '.join(invalid_roles)}")
+        
+        return value
+
+
+class ClinicalGuidelineCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating clinical guidelines with file upload"""
+    
+    class Meta:
+        model = ClinicalGuideline
+        fields = [
+            'title', 'description', 'version', 'category', 'specialty', 'keywords',
+            'content_type', 'text_content', 'effective_date', 'expiry_date',
+            'target_roles', 'priority'
+        ]
+    
+    def create(self, validated_data):
+        """Create a new clinical guideline"""
+        request = self.context.get('request')
+        
+        # Set the organization and creator based on the authenticated user
+        if request.user.role == 'hospital_admin':
+            # Get the hospital from the hospital admin profile
+            try:
+                hospital_admin = request.user.hospital_admin_profile
+                validated_data['organization'] = hospital_admin.hospital
+                validated_data['created_by'] = request.user
+            except:
+                raise serializers.ValidationError("User must be a hospital administrator to create guidelines.")
+        else:
+            raise serializers.ValidationError("Only hospital administrators can create clinical guidelines.")
+        
+        return super().create(validated_data)
+
+
+class GuidelineAccessSerializer(serializers.ModelSerializer):
+    """Serializer for guideline access logs"""
+    
+    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_role = serializers.CharField(source='user.role', read_only=True)
+    guideline_title = serializers.CharField(source='guideline.title', read_only=True)
+    
+    class Meta:
+        model = GuidelineAccess
+        fields = [
+            'id', 'guideline', 'guideline_title', 'user', 'user_name', 'user_email', 'user_role',
+            'accessed_at', 'action', 'ip_address', 'user_agent',
+            'session_duration', 'department', 'device_type'
+        ]
+        read_only_fields = ['id', 'accessed_at']
+
+
+class GuidelineBookmarkSerializer(serializers.ModelSerializer):
+    """Serializer for guideline bookmarks"""
+    
+    guideline_title = serializers.CharField(source='guideline.title', read_only=True)
+    guideline_category = serializers.CharField(source='guideline.category', read_only=True)
+    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    
+    class Meta:
+        model = GuidelineBookmark
+        fields = [
+            'id', 'user', 'user_name', 'guideline', 'guideline_title', 'guideline_category',
+            'bookmarked_at', 'notes', 'is_active'
+        ]
+        read_only_fields = ['id', 'user', 'bookmarked_at']
+    
+    def create(self, validated_data):
+        """Create a bookmark with the current user"""
+        request = self.context.get('request')
+        validated_data['user'] = request.user
+        return super().create(validated_data)
+
+
+class ClinicalGuidelineStatsSerializer(serializers.Serializer):
+    """Serializer for clinical guidelines statistics"""
+    
+    total_guidelines = serializers.IntegerField()
+    published_guidelines = serializers.IntegerField()
+    draft_guidelines = serializers.IntegerField()
+    expired_guidelines = serializers.IntegerField()
+    most_accessed = serializers.DictField()
+    categories_count = serializers.DictField()
+    recent_activities = serializers.ListField()

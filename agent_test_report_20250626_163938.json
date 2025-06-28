@@ -1,0 +1,206 @@
+{
+  "test_summary": {
+    "total_tests": 27,
+    "passed_tests": 1,
+    "failed_tests": 26,
+    "success_rate": 3.7037037037037033,
+    "duration": 0.11562705039978027,
+    "timestamp": "2025-06-26T16:39:38.135999"
+  },
+  "test_results": [
+    {
+      "test_name": "Authentication - test_user_1@example.com",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.035643",
+      "response_data": null,
+      "error": "AgentAPITester.log_test() got an unexpected keyword argument 'note'"
+    },
+    {
+      "test_name": "Authentication - test_user_2@example.com",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.044653",
+      "response_data": null,
+      "error": "AgentAPITester.log_test() got an unexpected keyword argument 'note'"
+    },
+    {
+      "test_name": "Authentication - test_user_3@example.com",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.051686",
+      "response_data": null,
+      "error": "AgentAPITester.log_test() got an unexpected keyword argument 'note'"
+    },
+    {
+      "test_name": "Authentication - admin@example.com",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.058849",
+      "response_data": null,
+      "error": "AgentAPITester.log_test() got an unexpected keyword argument 'note'"
+    },
+    {
+      "test_name": "Health Check",
+      "success": true,
+      "timestamp": "2025-06-26T16:39:38.072385",
+      "response_data": {
+        "status": "healthy",
+        "database": "connected",
+        "cache": "connected",
+        "timestamp": "2025-06-26T15:39:38.071883+00:00"
+      },
+      "error": null
+    },
+    {
+      "test_name": "Analytics Agent Status",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.087701",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Cycle Irregularities Analysis",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.090909",
+      "response_data": null,
+      "error": "Status: 401, Response: {\"detail\":\"Given token not valid for any token type\",\"code\":\"token_not_valid\",\"messages\":[{\"token_class\":\"AccessToken\",\"token_type\":\"access\",\"message\":\"Token is invalid or expired\"}]}"
+    },
+    {
+      "test_name": "Period Prediction",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.092801",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Fertility Prediction",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.094949",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Health Insights Generation",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.097846",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Personalized Recommendations",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.099901",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Health Risk Assessment",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.101881",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Pattern Analysis",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.104039",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Performance Agent Status",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.106486",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Database Optimization",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.108377",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Cache Refresh",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.110620",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Performance Monitoring",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.112637",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Clinical Agent Status",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.114657",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Health Screening Recommendations",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.116976",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Medical Appointment Scheduling",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.119001",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Medical History Update",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.120898",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Medical History Summary",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.122998",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Insufficient Data Handling",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.124925",
+      "response_data": null,
+      "error": "Status: 401"
+    },
+    {
+      "test_name": "Unauthorized Data Access Prevention",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.126955",
+      "response_data": null,
+      "error": "Should return 403, got 401"
+    },
+    {
+      "test_name": "Admin-Only Access Control",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.128709",
+      "response_data": null,
+      "error": "Should return 403, got 401"
+    },
+    {
+      "test_name": "Invalid User ID Handling",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.133516",
+      "response_data": null,
+      "error": "Expected 400, got 401"
+    },
+    {
+      "test_name": "Missing Parameters Handling",
+      "success": false,
+      "timestamp": "2025-06-26T16:39:38.135573",
+      "response_data": null,
+      "error": "Expected 400/422, got 401"
+    }
+  ]
+}

@@ -19,6 +19,16 @@ from .medical.appointment_reminder import AppointmentReminder
 from .medical.appointment import Appointment
 from .medical.payment_transaction import PaymentTransaction
 
+# Women's Health Models
+from .medical.womens_health_profile import WomensHealthProfile
+from .medical.menstrual_cycle import MenstrualCycle
+from .medical.pregnancy_record import PregnancyRecord
+from .medical.fertility_tracking import FertilityTracking
+from .medical.health_goal import HealthGoal
+from .medical.daily_health_log import DailyHealthLog
+from .medical.health_screening import HealthScreening
+from .medical.medical_history_extended import MedicalHistory
+
 #=============medical_staff folder==================================
 from .medical_staff.doctor import Doctor
 from .medical_staff.general_practitioner import GeneralPractitioner
@@ -56,6 +66,16 @@ __all__ = [
     'AppointmentReminder',
     'Appointment',
     'PaymentTransaction',
+    
+    # Women's Health models
+    'WomensHealthProfile',
+    'MenstrualCycle',
+    'PregnancyRecord',
+    'FertilityTracking',
+    'HealthGoal',
+    'DailyHealthLog',
+    'HealthScreening',
+    'MedicalHistory',
     
     # Medical Staff models
     'Doctor',

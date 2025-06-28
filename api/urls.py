@@ -67,6 +67,13 @@ from api.views.hospital.hospital_views import (
 
 # Medical views
 from api.views.medical.medical_views import DoctorAssignmentView
+from api.views.medical.appointment_medical_access_views import (
+    DoctorMedicalAccessRequestView,
+    PatientMedicalAccessControlView,
+    DoctorMedicalRecordAccessView,
+    get_appointment_access_status,
+    get_patient_active_accesses
+)
 
 # Patient Admission views
 from api.views.hospital.admission_views import PatientAdmissionViewSet
@@ -91,8 +98,63 @@ from api.views.payment.payment_views import (
 # Notification views
 from api.views.utils.notification_views import InAppNotificationViewSet
 
+# Women's Health views
+from api.views.womens_health_views import (
+    WomensHealthVerificationView,
+    WomensHealthVerifyOTPView,
+    WomensHealthProfileView,
+    MenstrualCycleView,
+    MenstrualCycleDetailView,
+    PregnancyRecordView,
+    FertilityTrackingView,
+    HealthGoalView,
+    DailyHealthLogView,
+    HealthScreeningView,
+    womens_health_dashboard_data
+)
+
+# Agent views
+from api.views.agent_views import (
+    # Analytics Agent endpoints
+    analytics_agent_status,
+    analyze_cycle_irregularities,
+    predict_next_period,
+    predict_fertility_window,
+    generate_health_insights,
+    get_personalized_recommendations,
+    assess_health_risks,
+    analyze_patterns,
+    
+    # Performance Agent endpoints
+    performance_agent_status,
+    optimize_database_queries,
+    refresh_cache_layer,
+    monitor_system_performance,
+    
+    # Clinical Agent endpoints
+    clinical_agent_status,
+    get_health_screening_recommendations,
+    schedule_medical_appointment,
+    update_medical_history,
+    get_medical_history_summary,
+    
+    # Health check
+    health_check as agent_health_check,
+)
+
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
+
+# Clinical Guidelines views
+from api.views.medical.clinical_guidelines_views import (
+    ClinicalGuidelineViewSet,
+    GuidelineAccessViewSet, 
+    GuidelineBookmarkViewSet
+)
+from api.views.medical.guideline_upload_views import (
+    GuidelineFileUploadView,
+    GuidelineFileUpdateView
+)
 
 
 
@@ -101,6 +163,9 @@ router.register(r'hospitals', HospitalLocationViewSet, basename='hospital')
 router.register(r'appointments', AppointmentViewSet, basename='appointment')
 router.register(r'notifications', InAppNotificationViewSet, basename='notification')
 router.register(r'admissions', PatientAdmissionViewSet, basename='admission')
+router.register(r'clinical-guidelines', ClinicalGuidelineViewSet, basename='clinical-guideline')
+router.register(r'guideline-access', GuidelineAccessViewSet, basename='guideline-access')
+router.register(r'guideline-bookmarks', GuidelineBookmarkViewSet, basename='guideline-bookmark')
 
 @api_view(['GET'])
 def health_check(request):
@@ -185,6 +250,10 @@ urlpatterns = [
     # Hospital appointments endpoint for admins
     path('hospitals/appointments/', hospital_appointments, name='hospital-appointments'),
 
+    # Clinical Guidelines upload endpoints
+    path('clinical-guidelines/upload/', GuidelineFileUploadView.as_view(), name='guideline-upload'),
+    path('clinical-guidelines/<uuid:guideline_id>/update-file/', GuidelineFileUpdateView.as_view(), name='guideline-file-update'),
+
     # Now include router URLs - hospital router will handle /api/hospitals/<id>/ patterns
     path('', include(router.urls)),
     path('profile/', UserProfileUpdateView.as_view(), name='profile-update'),
@@ -208,6 +277,40 @@ urlpatterns = [
     path('patient/medical-record/', PatientMedicalRecordView.as_view(), name='patient-medical-record'),
     path('patient/medical-record/request-otp/', RequestMedicalRecordOTPView.as_view(), name='request-medical-record-otp'),
     path('patient/medical-record/verify-otp/', VerifyMedicalRecordOTPView.as_view(), name='verify-medical-record-otp'),
+    
+    # Medical record sharing during appointments
+    path('appointments/<str:appointment_id>/request-medical-access/', 
+         DoctorMedicalAccessRequestView.as_view(), 
+         name='request-medical-access'),
+    path('appointments/<str:appointment_id>/access-status/', 
+         get_appointment_access_status, 
+         name='appointment-access-status'),
+    path('appointments/<str:appointment_id>/medical-records/', 
+         DoctorMedicalRecordAccessView.as_view(), 
+         name='appointment-medical-records'),
+    
+    # Alternative endpoints that the frontend might be calling
+    path('professional/patient/<str:appointment_id>/request-access/', 
+         DoctorMedicalAccessRequestView.as_view(), 
+         name='professional-request-access'),
+    path('professional/patient/<str:appointment_id>/consents/', 
+         get_appointment_access_status, 
+         name='professional-consents'),
+    path('professional/patient/<str:appointment_id>/access-logs/', 
+         get_patient_active_accesses, 
+         name='professional-access-logs'),
+    path('professional/patient/<str:appointment_id>/medical-access/<str:appointment_id2>/', 
+         DoctorMedicalRecordAccessView.as_view(), 
+         name='professional-medical-access'),
+    path('patient/medical-access-requests/', 
+         PatientMedicalAccessControlView.as_view(), 
+         name='patient-medical-access-requests'),
+    path('patient/medical-access-requests/<int:access_request_id>/', 
+         PatientMedicalAccessControlView.as_view(), 
+         name='patient-medical-access-control'),
+    path('patient/active-medical-accesses/', 
+         get_patient_active_accesses, 
+         name='patient-active-medical-accesses'),
     
     # New endpoint for doctor's appointments
     path('doctor-appointments/', doctor_appointments, name='doctor-appointments'),
@@ -301,6 +404,63 @@ urlpatterns = [
     
     # 🛡️ APPOINTMENT CONFLICT CHECK - Pre-validation endpoint
     path('appointments/check-conflict/', check_appointment_conflict, name='check-appointment-conflict'),
+    
+    # 🩺 WOMEN'S HEALTH ENDPOINTS - Comprehensive women's health management
+    # Verification endpoints
+    path('womens-health/verification/', WomensHealthVerificationView.as_view(), name='womens-health-verification'),
+    path('womens-health/verification/verify/', WomensHealthVerifyOTPView.as_view(), name='womens-health-verify-otp'),
+    
+    # Dashboard
+    path('womens-health/dashboard/', womens_health_dashboard_data, name='womens-health-dashboard'),
+    
+    # Profile management
+    path('womens-health/profile/', WomensHealthProfileView.as_view(), name='womens-health-profile'),
+    
+    # Menstrual cycle tracking
+    path('womens-health/cycles/', MenstrualCycleView.as_view(), name='womens-health-cycles'),
+    path('womens-health/cycles/<int:cycle_id>/', MenstrualCycleDetailView.as_view(), name='womens-health-cycle-detail'),
+    
+    # Pregnancy records
+    path('womens-health/pregnancy/', PregnancyRecordView.as_view(), name='womens-health-pregnancy'),
+    
+    # Fertility tracking
+    path('womens-health/fertility/', FertilityTrackingView.as_view(), name='womens-health-fertility'),
+    
+    # Health goals
+    path('womens-health/goals/', HealthGoalView.as_view(), name='womens-health-goals'),
+    
+    # Daily health logs
+    path('womens-health/logs/', DailyHealthLogView.as_view(), name='womens-health-logs'),
+    
+    # Health screenings
+    path('womens-health/screenings/', HealthScreeningView.as_view(), name='womens-health-screenings'),
+    
+    # 🤖 WOMEN'S HEALTH AGENTS - AI-powered health management system
+    # Health check endpoint
+    path('agents/health/', agent_health_check, name='agent_health_check'),
+    
+    # Analytics Agent URLs
+    path('agents/analytics/status/', analytics_agent_status, name='analytics_status'),
+    path('agents/analytics/cycle-irregularities/', analyze_cycle_irregularities, name='cycle_irregularities'),
+    path('agents/analytics/predict-period/', predict_next_period, name='predict_period'),
+    path('agents/analytics/predict-fertility/', predict_fertility_window, name='predict_fertility'),
+    path('agents/analytics/health-insights/', generate_health_insights, name='health_insights'),
+    path('agents/analytics/recommendations/', get_personalized_recommendations, name='recommendations'),
+    path('agents/analytics/health-risks/', assess_health_risks, name='health_risks'),
+    path('agents/analytics/analyze-patterns/', analyze_patterns, name='analyze_patterns'),
+    
+    # Performance Agent URLs (Admin only)
+    path('agents/performance/status/', performance_agent_status, name='performance_status'),
+    path('agents/performance/optimize-database/', optimize_database_queries, name='optimize_database'),
+    path('agents/performance/refresh-cache/', refresh_cache_layer, name='refresh_cache'),
+    path('agents/performance/monitor-performance/', monitor_system_performance, name='monitor_performance'),
+    
+    # Clinical Agent URLs
+    path('agents/clinical/status/', clinical_agent_status, name='clinical_status'),
+    path('agents/clinical/screening-recommendations/', get_health_screening_recommendations, name='screening_recommendations'),
+    path('agents/clinical/schedule-appointment/', schedule_medical_appointment, name='schedule_appointment'),
+    path('agents/clinical/update-medical-history/', update_medical_history, name='update_medical_history'),
+    path('agents/clinical/medical-history-summary/', get_medical_history_summary, name='medical_history_summary'),
 ]
 
 # Available endpoints:

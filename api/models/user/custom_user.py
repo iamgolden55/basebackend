@@ -84,6 +84,28 @@ class CustomUser(AbstractUser):
     medical_record_access_token = models.CharField(max_length=64, null=True, blank=True)
     medical_record_token_created_at = models.DateTimeField(null=True, blank=True)
     
+    # Women's Health Verification fields
+    womens_health_verified = models.BooleanField(
+        default=False,
+        help_text="Whether user has been verified for women's health features access"
+    )
+    womens_health_verification_date = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="Date when women's health verification was completed"
+    )
+    womens_health_otp = models.CharField(
+        max_length=6, 
+        null=True, 
+        blank=True,
+        help_text="OTP for women's health verification"
+    )
+    womens_health_otp_created_at = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="Timestamp when women's health OTP was generated"
+    )
+    
     #  Roles for the user
     ROLES = [
     # Existing roles

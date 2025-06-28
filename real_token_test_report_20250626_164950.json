@@ -1,0 +1,338 @@
+{
+  "timestamp": "2025-06-26T16:49:50.500921",
+  "summary": {
+    "total": 19,
+    "passed": 7,
+    "failed": 12,
+    "success_rate": "36.8%"
+  },
+  "results": [
+    {
+      "name": "Health Check",
+      "success": true,
+      "status": 200,
+      "endpoint": "/health-check/",
+      "method": "GET",
+      "response": {
+        "status": "healthy"
+      }
+    },
+    {
+      "name": "Agent Health Check",
+      "success": true,
+      "status": 200,
+      "endpoint": "/agents/health/",
+      "method": "GET",
+      "response": {
+        "status": "healthy",
+        "database": "connected",
+        "cache": "connected",
+        "timestamp": "2025-06-26T15:49:49.534625+00:00"
+      }
+    },
+    {
+      "name": "Analytics Status",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/analytics/status/",
+      "method": "GET",
+      "error": {
+        "error": "Failed to initialize Analytics Agent"
+      }
+    },
+    {
+      "name": "Cycle Irregularities",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/analytics/cycle-irregularities/",
+      "method": "POST",
+      "error": {
+        "error": "Failed to initialize Analytics Agent"
+      }
+    },
+    {
+      "name": "Predict Period",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/analytics/predict-period/",
+      "method": "POST",
+      "error": {
+        "error": "Failed to initialize Analytics Agent"
+      }
+    },
+    {
+      "name": "Predict Fertility",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/analytics/predict-fertility/",
+      "method": "POST",
+      "error": {
+        "error": "Failed to initialize Analytics Agent"
+      }
+    },
+    {
+      "name": "Health Insights",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/analytics/health-insights/",
+      "method": "POST",
+      "error": {
+        "error": "Failed to initialize Analytics Agent"
+      }
+    },
+    {
+      "name": "Recommendations",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/analytics/recommendations/",
+      "method": "POST",
+      "error": {
+        "error": "Failed to initialize Analytics Agent"
+      }
+    },
+    {
+      "name": "Health Risks",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/analytics/health-risks/",
+      "method": "POST",
+      "error": {
+        "error": "Failed to initialize Analytics Agent"
+      }
+    },
+    {
+      "name": "Analyze Patterns",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/analytics/analyze-patterns/",
+      "method": "POST",
+      "error": {
+        "error": "Failed to initialize Analytics Agent"
+      }
+    },
+    {
+      "name": "Performance Status",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/performance/status/",
+      "method": "GET",
+      "error": {
+        "error": "No module named 'celery'"
+      }
+    },
+    {
+      "name": "Optimize Database",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/performance/optimize-database/",
+      "method": "POST",
+      "error": {
+        "error": "No module named 'celery'"
+      }
+    },
+    {
+      "name": "Refresh Cache",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/performance/refresh-cache/",
+      "method": "POST",
+      "error": {
+        "error": "No module named 'celery'"
+      }
+    },
+    {
+      "name": "Monitor Performance",
+      "success": false,
+      "status": 500,
+      "endpoint": "/agents/performance/monitor-performance/",
+      "method": "GET",
+      "error": {
+        "error": "No module named 'celery'"
+      }
+    },
+    {
+      "name": "Clinical Status",
+      "success": true,
+      "status": 200,
+      "endpoint": "/agents/clinical/status/",
+      "method": "GET",
+      "response": {
+        "name": "Clinical",
+        "version": "1.0.0",
+        "initialized": true,
+        "services": {
+          "health_screening": {
+            "service": "HealthScreeningService",
+            "status": "active",
+            "last_check": "2025-06-26T15:49:50.427159+00:00"
+          },
+          "medical_history": {
+            "service": "MedicalHistoryService",
+            "status": "active",
+            "last_check": "2025-06-26T15:49:50.427175+00:00"
+          },
+          "provider_integration": {
+            "service": "ProviderIntegrationService",
+            "status": "active",
+            "last_check": "2025-06-26T15:49:50.427178+00:00"
+          }
+        },
+        "last_check": "2025-06-26T15:49:50.427180+00:00"
+      }
+    },
+    {
+      "name": "Screening Recommendations",
+      "success": true,
+      "status": 200,
+      "endpoint": "/agents/clinical/screening-recommendations/",
+      "method": "POST",
+      "response": {
+        "success": true,
+        "agent": "Clinical",
+        "operation": "get_health_screening_recommendations",
+        "data": {
+          "user_id": 4,
+          "age": 25,
+          "screening_recommendations": [
+            {
+              "screening_type": "cervical_cancer_screening",
+              "recommended_frequency": "every_3_years",
+              "priority": "routine",
+              "description": "Pap smear for cervical cancer screening",
+              "last_completed": null,
+              "next_due": "2025-06-26",
+              "reasons": [
+                "Prevent cervical cancer",
+                "Early detection of abnormal cells"
+              ]
+            },
+            {
+              "screening_type": "blood_pressure_check",
+              "recommended_frequency": "annually",
+              "priority": "routine",
+              "description": "Regular blood pressure monitoring",
+              "last_completed": null,
+              "next_due": "2025-06-26",
+              "reasons": [
+                "Monitor cardiovascular health",
+                "Detect hypertension early"
+              ]
+            }
+          ],
+          "urgent_screenings": [],
+          "routine_screenings": [
+            {
+              "screening_type": "cervical_cancer_screening",
+              "recommended_frequency": "every_3_years",
+              "priority": "routine",
+              "description": "Pap smear for cervical cancer screening",
+              "last_completed": null,
+              "next_due": "2025-06-26",
+              "reasons": [
+                "Prevent cervical cancer",
+                "Early detection of abnormal cells"
+              ]
+            },
+            {
+              "screening_type": "blood_pressure_check",
+              "recommended_frequency": "annually",
+              "priority": "routine",
+              "description": "Regular blood pressure monitoring",
+              "last_completed": null,
+              "next_due": "2025-06-26",
+              "reasons": [
+                "Monitor cardiovascular health",
+                "Detect hypertension early"
+              ]
+            }
+          ],
+          "lifestyle_recommendations": [
+            {
+              "category": "nutrition",
+              "title": "Calcium and Vitamin D",
+              "description": "Ensure adequate calcium (1000-1200mg) and vitamin D (600-800 IU) daily",
+              "priority": "medium",
+              "reasons": [
+                "Bone health",
+                "Hormonal balance"
+              ]
+            },
+            {
+              "category": "exercise",
+              "title": "Regular Physical Activity",
+              "description": "150 minutes of moderate aerobic activity per week",
+              "priority": "high",
+              "reasons": [
+                "Cardiovascular health",
+                "Mental wellbeing",
+                "Hormone regulation"
+              ]
+            },
+            {
+              "category": "preventive_care",
+              "title": "Regular Self-Examinations",
+              "description": "Monthly breast self-examinations",
+              "priority": "high",
+              "reasons": [
+                "Early detection",
+                "Body awareness"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Schedule Appointment",
+      "success": true,
+      "status": 201,
+      "endpoint": "/agents/clinical/schedule-appointment/",
+      "method": "POST",
+      "response": {
+        "success": true,
+        "agent": "Clinical",
+        "operation": "schedule_medical_appointment",
+        "data": {
+          "user_id": 4,
+          "error": "Appointment() got unexpected keyword arguments: 'user_id', 'scheduled_date', 'provider_name'",
+          "success": false
+        }
+      }
+    },
+    {
+      "name": "Update Medical History",
+      "success": true,
+      "status": 200,
+      "endpoint": "/agents/clinical/update-medical-history/",
+      "method": "POST",
+      "response": {
+        "success": true,
+        "agent": "Clinical",
+        "operation": "update_medical_history",
+        "data": {
+          "user_id": 4,
+          "updated_fields": [],
+          "new_records_created": 1,
+          "update_timestamp": "2025-06-26T15:49:50.474154+00:00"
+        }
+      }
+    },
+    {
+      "name": "Medical History Summary",
+      "success": true,
+      "status": 200,
+      "endpoint": "/agents/clinical/medical-history-summary/",
+      "method": "GET",
+      "response": {
+        "success": true,
+        "agent": "Clinical",
+        "operation": "get_medical_history_summary",
+        "data": {
+          "user_id": 4,
+          "error": "'WomensHealthProfile' object has no attribute 'menstrualcycle_set'",
+          "success": false
+        }
+      }
+    }
+  ]
+}
