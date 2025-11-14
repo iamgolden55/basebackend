@@ -1,0 +1,370 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<div class="email-container">
+    <div class="header">
+        <h1>Hospital Registration Approved ✅</h1>
+    </div>
+
+    <div class="content">
+        <p>Hello {{ patient_name }},</p>
+
+        <p>Great news! Your registration with <strong>{{ hospital_name }}</strong> has been approved. You're now registered as a patient and can access all hospital services.</p>
+
+        <div class="approval-summary">
+            <h3>Registration Details</h3>
+            <div class="detail-row">
+                <span class="label">Hospital:</span>
+                <span class="value">{{ hospital_name }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Location:</span>
+                <span class="value">{{ hospital_address }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Approval Date:</span>
+                <span class="value">{{ approval_date }}</span>
+            </div>
+            {% if hpn %}
+            <div class="detail-row">
+                <span class="label">Your Health Profile Number (HPN):</span>
+                <span class="value"><strong>{{ hpn }}</strong></span>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="next-steps">
+            <h3>What You Can Do Now 🎉</h3>
+            <ul>
+                <li><strong>Book Appointments:</strong> Schedule appointments with doctors at {{ hospital_name }}</li>
+                <li><strong>Access Medical Records:</strong> View your health records and test results</li>
+                <li><strong>Request Prescriptions:</strong> Submit prescription requests to your doctors</li>
+                <li><strong>Emergency Services:</strong> Access emergency care at the hospital when needed</li>
+                <li><strong>Specialist Referrals:</strong> Get referrals to specialist services</li>
+            </ul>
+        </div>
+
+        <div class="important-info">
+            <h3>Important Information 📋</h3>
+            <ul>
+                <li><strong>Bring ID:</strong> Always carry valid identification when visiting the hospital</li>
+                {% if hpn %}
+                <li><strong>Health Profile Number:</strong> Use your HPN ({{ hpn }}) for all medical services</li>
+                {% endif %}
+                <li><strong>Contact Information:</strong> Keep your contact details up to date in your PHB account</li>
+                <li><strong>Insurance:</strong> Ensure your health insurance information is current</li>
+                <li><strong>Medical History:</strong> Update your medical history and allergies in your profile</li>
+            </ul>
+        </div>
+
+        <div class="hospital-contact">
+            <h3>Hospital Contact Information 🏥</h3>
+            <p><strong>{{ hospital_name }}</strong></p>
+            <p>{{ hospital_address }}</p>
+            {% if hospital_phone %}
+            <p>Phone: {{ hospital_phone }}</p>
+            {% endif %}
+            {% if hospital_email %}
+            <p>Email: {{ hospital_email }}</p>
+            {% endif %}
+        </div>
+
+        <div class="cta-section">
+            <h3>Ready to Get Started?</h3>
+            <p>Access your PHB account to book your first appointment or explore available services.</p>
+            <div class="button-container">
+                <a href="{{ dashboard_url }}" class="cta-button">Go to My Account</a>
+            </div>
+            {% if hospital_profile_url %}
+            <div class="button-container" style="margin-top: 12px;">
+                <a href="{{ hospital_profile_url }}" class="cta-button secondary">View Hospital Profile</a>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="support-section">
+            <h3>Need Help? 💬</h3>
+            <p>If you have any questions about your registration or using PHB services:</p>
+            <ul>
+                <li>Visit our <a href="{{ help_url }}">Help Center</a></li>
+                <li>Contact PHB Support at support@phb.ng</li>
+                <li>Call the hospital directly at {{ hospital_phone|default:"the number listed above" }}</li>
+            </ul>
+        </div>
+
+        <div class="footer-message">
+            <p>Welcome to the PHB healthcare network! We're here to support your health journey.</p>
+            <p style="margin-top: 20px; color: #666; font-size: 14px;">
+                This is an automated notification from the PHB (Public Health Bureau) system.
+                Please do not reply to this email.
+            </p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .email-container {
+        max-width: 600px;
+        margin: 0 auto;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        color: #333;
+        line-height: 1.6;
+    }
+
+    .header {
+        background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
+        color: white;
+        padding: 32px 24px;
+        text-align: center;
+        border-radius: 8px 8px 0 0;
+    }
+
+    .header h1 {
+        margin: 0;
+        font-size: 28px;
+        font-weight: 600;
+        color: white;
+    }
+
+    .content {
+        background: white;
+        padding: 32px 24px;
+        border: 1px solid #e0e0e0;
+        border-top: none;
+        border-radius: 0 0 8px 8px;
+    }
+
+    .content > p {
+        margin: 0 0 20px 0;
+        font-size: 16px;
+    }
+
+    .approval-summary {
+        background: #f9f9f9;
+        border-left: 4px solid #4caf50;
+        padding: 20px;
+        margin: 24px 0;
+        border-radius: 4px;
+    }
+
+    .approval-summary h3 {
+        margin-top: 0;
+        margin-bottom: 16px;
+        font-size: 18px;
+        color: #2c3e50;
+    }
+
+    .detail-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px solid #e0e0e0;
+    }
+
+    .detail-row:last-child {
+        border-bottom: none;
+    }
+
+    .detail-row .label {
+        font-weight: 500;
+        color: #666;
+    }
+
+    .detail-row .value {
+        text-align: right;
+        font-weight: 600;
+        color: #333;
+    }
+
+    .next-steps {
+        background: #e8f5e9;
+        border-left: 4px solid #4caf50;
+        padding: 20px;
+        margin: 24px 0;
+        border-radius: 4px;
+    }
+
+    .next-steps h3 {
+        margin-top: 0;
+        margin-bottom: 12px;
+        font-size: 18px;
+        color: #2c3e50;
+    }
+
+    .next-steps ul {
+        margin: 0;
+        padding-left: 20px;
+    }
+
+    .next-steps li {
+        margin-bottom: 8px;
+        line-height: 1.5;
+    }
+
+    .important-info {
+        background: #fff3e0;
+        border-left: 4px solid #ff9800;
+        padding: 20px;
+        margin: 24px 0;
+        border-radius: 4px;
+    }
+
+    .important-info h3 {
+        margin-top: 0;
+        margin-bottom: 12px;
+        font-size: 18px;
+        color: #2c3e50;
+    }
+
+    .important-info ul {
+        margin: 0;
+        padding-left: 20px;
+    }
+
+    .important-info li {
+        margin-bottom: 8px;
+        line-height: 1.5;
+    }
+
+    .hospital-contact {
+        background: #f5f5f5;
+        border-left: 4px solid #2196f3;
+        padding: 20px;
+        margin: 24px 0;
+        border-radius: 4px;
+    }
+
+    .hospital-contact h3 {
+        margin-top: 0;
+        margin-bottom: 12px;
+        font-size: 18px;
+        color: #2c3e50;
+    }
+
+    .hospital-contact p {
+        margin: 4px 0;
+        line-height: 1.6;
+    }
+
+    .cta-section {
+        text-align: center;
+        margin: 32px 0;
+        padding: 24px;
+        background: #f9f9f9;
+        border-radius: 8px;
+    }
+
+    .cta-section h3 {
+        margin-top: 0;
+        margin-bottom: 12px;
+        font-size: 20px;
+        color: #2c3e50;
+    }
+
+    .cta-section p {
+        margin-bottom: 20px;
+        color: #666;
+    }
+
+    .button-container {
+        margin: 16px 0;
+    }
+
+    .cta-button {
+        display: inline-block;
+        padding: 14px 32px;
+        background: #4caf50;
+        color: white !important;
+        text-decoration: none;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 16px;
+        transition: background 0.3s ease;
+    }
+
+    .cta-button:hover {
+        background: #45a049;
+    }
+
+    .cta-button.secondary {
+        background: #2196f3;
+    }
+
+    .cta-button.secondary:hover {
+        background: #1976d2;
+    }
+
+    .support-section {
+        background: #f5f5f5;
+        padding: 20px;
+        margin: 24px 0;
+        border-radius: 4px;
+        border-left: 4px solid #9c27b0;
+    }
+
+    .support-section h3 {
+        margin-top: 0;
+        margin-bottom: 12px;
+        font-size: 18px;
+        color: #2c3e50;
+    }
+
+    .support-section ul {
+        margin: 12px 0 0 0;
+        padding-left: 20px;
+    }
+
+    .support-section li {
+        margin-bottom: 6px;
+    }
+
+    .support-section a {
+        color: #2196f3;
+        text-decoration: none;
+    }
+
+    .support-section a:hover {
+        text-decoration: underline;
+    }
+
+    .footer-message {
+        margin-top: 32px;
+        padding-top: 24px;
+        border-top: 2px solid #e0e0e0;
+        text-align: center;
+    }
+
+    .footer-message p {
+        margin: 8px 0;
+    }
+
+    @media only screen and (max-width: 600px) {
+        .email-container {
+            width: 100% !important;
+        }
+
+        .header, .content {
+            padding: 20px 16px !important;
+        }
+
+        .header h1 {
+            font-size: 24px !important;
+        }
+
+        .detail-row {
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .detail-row .value {
+            text-align: left;
+        }
+
+        .cta-button {
+            display: block;
+            width: 100%;
+            box-sizing: border-box;
+        }
+    }
+</style>
+{% endblock %}

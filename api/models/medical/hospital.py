@@ -80,7 +80,43 @@ class Hospital(models.Model):
         blank=True,
         help_text="Hospital contact email"
     )
-    
+
+    # Medical Director Information
+    medical_director_name = models.CharField(max_length=200, null=True, blank=True)
+    medical_director_license = models.CharField(max_length=50, null=True, blank=True, help_text="Medical Director License Number (e.g., MDCN-45678)")
+    medical_director_specialization = models.CharField(max_length=100, null=True, blank=True)
+    medical_director_years_experience = models.PositiveIntegerField(default=0, help_text="Years of experience")
+
+    # Primary Contact Information
+    primary_contact_name = models.CharField(max_length=200, null=True, blank=True)
+    primary_contact_title = models.CharField(max_length=100, null=True, blank=True)
+    primary_contact_phone = models.CharField(max_length=20, null=True, blank=True)
+    primary_contact_email = models.EmailField(null=True, blank=True)
+
+    # Administrative Contact Information
+    administrative_contact_name = models.CharField(max_length=200, null=True, blank=True)
+    administrative_contact_title = models.CharField(max_length=100, null=True, blank=True)
+    administrative_contact_phone = models.CharField(max_length=20, null=True, blank=True)
+    administrative_contact_email = models.EmailField(null=True, blank=True)
+
+    # Financial Information (Registration Fees)
+    government_license_fees = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Government license fees in NGN")
+    certification_fees = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Certification fees in NGN")
+    total_registration_fees = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Total paid registration fees in NGN")
+
+    # Staffing Requirements
+    minimum_doctors_required = models.PositiveIntegerField(default=10, help_text="Minimum number of doctors required")
+    minimum_nurses_required = models.PositiveIntegerField(default=25, help_text="Minimum number of nurses required")
+
+    # Digital Infrastructure & Capabilities
+    has_hospital_information_system = models.BooleanField(default=False, help_text="Hospital Information System (HIS)")
+    has_electronic_medical_records = models.BooleanField(default=False, help_text="Electronic Medical Records (EMR)")
+    has_telemedicine_capabilities = models.BooleanField(default=False, help_text="Telemedicine capabilities")
+    has_api_integration = models.BooleanField(default=False, help_text="Ready to integrate with external healthcare systems")
+    has_online_appointment_booking = models.BooleanField(default=False, help_text="Online appointment booking system")
+    has_patient_portal = models.BooleanField(default=False, help_text="Patient portal access")
+    has_mobile_application = models.BooleanField(default=False, help_text="Mobile application")
+
     # Accreditation and Certification
     accreditation_status = models.BooleanField(default=False)
     accreditation_expiry = models.DateField(null=True, blank=True)
@@ -286,9 +322,20 @@ class Hospital(models.Model):
         return self.accreditation_expiry > date.today() if self.accreditation_expiry else False
     
     def save(self, *args, **kwargs):
+        from django.utils import timezone
+
         if not self.registration_number:
             # Generate a unique registration number if not provided
             self.registration_number = f"H-{uuid.uuid4().hex[:8].upper()}"
+
+        # Automatically set verification_date and accreditation when hospital is verified
+        if self.is_verified:
+            if not self.verification_date:
+                self.verification_date = timezone.now().date()
+            # Verified hospitals are automatically accredited
+            if not self.accreditation_status:
+                self.accreditation_status = True
+
         super().save(*args, **kwargs)
 
     @classmethod

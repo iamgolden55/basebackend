@@ -62,3 +62,5 @@ urllib3==2.1.0
 uvicorn==0.34.2
 whitenoise==6.5.0
 yarl==1.20.0
+xhtml2pdf==0.2.16
+weasyprint>=66.0

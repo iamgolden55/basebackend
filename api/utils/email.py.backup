@@ -1,0 +1,2701 @@
+import os
+from django.core.mail import send_mail, EmailMessage
+from django.template.loader import render_to_string
+from django.utils.html import strip_tags
+from django.conf import settings
+import logging
+from .calendar import generate_ics_for_appointment
+from django.utils import timezone
+
+logger = logging.getLogger(__name__)
+
+def _resolve_contact_email(email):
+    """
+    Resolve masked hospital admin emails to real contact emails
+    
+    Args:
+        email: Email address (could be masked like admin.stnicholas@example.com)
+        
+    Returns:
+        str: Real contact email address
+    """
+    try:
+        # Check if this is a masked hospital admin email
+        if email.endswith('@example.com') or email.endswith('@phb.com'):
+            from api.models.medical.hospital_auth import HospitalAdmin
+            
+            try:
+                admin = HospitalAdmin.objects.get(email=email)
+                
+                # Priority order for real email resolution:
+                # 1. contact_email field (the real email)
+                if admin.contact_email:
+                    return admin.contact_email
+                
+                # 2. Hospital's contact email
+                if hasattr(admin, 'hospital') and admin.hospital and admin.hospital.email:
+                    return admin.hospital.email
+                
+                # 3. User's email (if different from admin username)
+                if hasattr(admin, 'user') and admin.user and admin.user.email != email:
+                    return admin.user.email
+                
+            except HospitalAdmin.DoesNotExist:
+                logger.warning(f"Hospital admin not found for masked email: {email}")
+    
+    except Exception as e:
+        logger.error(f"Error resolving contact email for {email}: {e}")
+    
+    # Return original email if resolution fails or not a masked email
+    return email
+
+def send_message_notification_email(recipient_email, recipient_name, sender_name, message_preview, conversation_title):
+    """
+    Send email notification when a new message is received
+    Automatically resolves masked emails to real contact emails
+    """
+    try:
+        # Resolve masked email to real contact email
+        real_email = _resolve_contact_email(recipient_email)
+        if real_email != recipient_email:
+            logger.debug(f"Resolved masked email {recipient_email} to real email {real_email}")
+            recipient_email = real_email
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:3001').rstrip('/')
+        
+        context = {
+            'recipient_name': recipient_name,
+            'sender_name': sender_name,
+            'message_preview': message_preview,
+            'conversation_title': conversation_title,
+            'frontend_url': frontend_url,
+            'timestamp': timezone.now()
+        }
+        
+        # Try to use a dedicated template, fall back to simple HTML
+        try:
+            html_message = render_to_string('email/message_notification.html', context)
+        except:
+            # Fallback HTML template
+            html_message = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <div style="background: #f8f9fa; padding: 20px; border-radius: 8px;">
+                    <h2 style="color: #007bff; margin-bottom: 20px;">💬 New Message</h2>
+                    
+                    <p>Hi {recipient_name},</p>
+                    
+                    <p>You have a new message from <strong>{sender_name}</strong> in the conversation:</p>
+                    <h3 style="color: #495057;">{conversation_title}</h3>
+                    
+                    <div style="background: white; padding: 15px; border-left: 4px solid #007bff; margin: 20px 0; border-radius: 4px;">
+                        <p style="margin: 0; color: #6c757d; font-style: italic;">"{message_preview}"</p>
+                    </div>
+                    
+                    <a href="{frontend_url}/chat" style="display: inline-block; background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; margin-top: 20px;">
+                        View Message
+                    </a>
+                    
+                    <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
+                    <p style="color: #6c757d; font-size: 14px; margin: 0;">
+                        This is an automated notification from your healthcare communication system.<br>
+                        Time: {timezone.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+        
+        plain_message = f"""
+        New Message from {sender_name}
+        
+        Hi {recipient_name},
+        
+        You have a new message in: {conversation_title}
+        
+        Message: "{message_preview}"
+        
+        View your messages at: {frontend_url}/chat
+        
+        Time: {timezone.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
+        """
+        
+        send_mail(
+            subject=f'💬 New message from {sender_name}',
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[recipient_email],
+            html_message=html_message,
+            fail_silently=True,  # Don't break the message sending if email fails
+        )
+        
+        logger.debug(f"Message notification email sent to {recipient_email}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to send message notification email to {recipient_email}: {str(e)}")
+        return False
+
+def send_welcome_email(user):
+    """
+    Send a welcome email to newly verified users with their account details
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL').rstrip('/')
+        
+        context = {
+            'user': user,
+            'frontend_url': frontend_url
+        }
+        
+        html_message = render_to_string('email/welcome.html', context)
+        plain_message = strip_tags(html_message)
+        
+        send_mail(
+            subject='Welcome to PHB - Your Account is Ready! 🎉',
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send welcome email: {str(e)}")
+        return False
+
+def send_verification_email(user, verification_link):
+    """
+    Send an email verification link to new users
+    """
+    try:
+        context = {
+            'user': user,
+            'verification_link': verification_link,
+        }
+        
+        html_message = render_to_string('email/verification.html', context)
+        plain_message = strip_tags(html_message)
+        
+        send_mail(
+            subject='Verify Your PHB Account',
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send verification email: {str(e)}")
+        return False
+
+def send_appointment_confirmation_email(appointment):
+    """
+    Send a booking summary confirmation email after appointment is confirmed
+    
+    Args:
+        appointment: The appointment object with all booking details
+    
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', '').rstrip('/')
+        
+        # Use serializer to get formatted data
+        from api.serializers import AppointmentSerializer
+        serializer = AppointmentSerializer(appointment)
+        serializer_data = serializer.data
+        
+        # Patient's full name
+        patient_name = serializer_data.get('patient_name')
+        if not patient_name:
+            patient_name = appointment.patient.email
+        
+        context = {
+            'patient_name': patient_name,
+            'appointment_id': appointment.appointment_id,
+            'doctor_name': serializer_data.get('doctor_full_name'),
+            'department_name': serializer_data.get('department_name'),
+            'hospital_name': serializer_data.get('hospital_name'),
+            'appointment_date': serializer_data.get('formatted_date_time'),
+            'appointment_date_only': serializer_data.get('formatted_date'),
+            'appointment_time_only': serializer_data.get('formatted_time'),
+            'is_insurance_based': appointment.is_insurance_based,
+            'payment_status': appointment.payment_status,
+            'frontend_url': frontend_url,
+            'appointment_type': serializer_data.get('formatted_appointment_type'),
+            'priority': serializer_data.get('formatted_priority'),
+            'chief_complaint': appointment.chief_complaint,
+            'calendar_link_included': True,
+            'important_notes': serializer_data.get('important_notes'),
+            'duration': serializer_data.get('appointment_duration_display')
+        }
+        
+        html_message = render_to_string('email/appointment_booking_confirmation.html', context)
+        plain_message = strip_tags(html_message)
+        
+        # Create email message
+        email = EmailMessage(
+            subject=f'Your Appointment Confirmation - {appointment.appointment_id}',
+            body=html_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@phb.com'),
+            to=[appointment.patient.email]
+        )
+        email.content_subtype = "html"
+        
+        # Generate and attach the calendar file
+        try:
+            ics_content = generate_ics_for_appointment(appointment)
+            email.attach(
+                f'appointment_{appointment.appointment_id}.ics',
+                ics_content,
+                'text/calendar'
+            )
+            logger.info(f"Calendar attachment generated for appointment {appointment.appointment_id}")
+        except Exception as e:
+            logger.error(f"Failed to generate calendar attachment: {str(e)}")
+        
+        # Send the email
+        email.send(fail_silently=False)
+        
+        logger.info(f"Appointment confirmation email sent to {appointment.patient.email} for appointment {appointment.appointment_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send appointment confirmation email: {str(e)}")
+        return False
+
+def send_appointment_status_update_email(appointment):
+    """
+    Send a status update email when an appointment's status changes
+    
+    Args:
+        appointment: The appointment object with updated status
+    
+    Returns:
+        dict: Information about the email sending status
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', '').rstrip('/')
+        
+        # Use serializer to get formatted data
+        from api.serializers import AppointmentSerializer
+        serializer = AppointmentSerializer(appointment)
+        serializer_data = serializer.data
+        
+        # Patient's full name
+        patient_name = serializer_data.get('patient_name')
+        if not patient_name:
+            patient_name = appointment.patient.email
+            
+        # Get appropriate context based on appointment status
+        context = {
+            'patient_name': patient_name,
+            'appointment_id': appointment.appointment_id,
+            'appointment_date': appointment.appointment_date,
+            'appointment_date_only': appointment.appointment_date.strftime('%d %B, %Y'),
+            'appointment_time_only': appointment.appointment_date.strftime('%I:%M %p'),
+            'doctor_name': f"Dr. {appointment.doctor.user.get_full_name()}",
+            'department_name': appointment.department.name,
+            'hospital_name': appointment.hospital.name,
+            'appointment_type': serializer_data.get('formatted_appointment_type'),
+            'appointment_status': serializer_data.get('status_display'),
+            'frontend_url': frontend_url,
+            'hospital_phone': appointment.hospital.phone,
+            'hospital_email': appointment.hospital.email,
+            # Flags for template conditionals
+            'is_confirmed': appointment.status == 'confirmed',
+            'is_cancelled': appointment.status == 'cancelled',
+            'is_completed': appointment.status == 'completed',
+            'cancellation_reason': appointment.cancellation_reason if hasattr(appointment, 'cancellation_reason') else None,
+        }
+        
+        # Special context for completed appointments
+        if appointment.status == 'completed':
+            # Include dashboard URL for accessing medical records
+            dashboard_url = f"{frontend_url}/dashboard/medical-records"
+            context['dashboard_url'] = dashboard_url
+        
+        # Add calendar attachment for confirmed appointments
+        if appointment.status == 'confirmed':
+            # Get calendar data from appointment
+            from api.utils.calendar import generate_ics_for_appointment
+            ics_content = generate_ics_for_appointment(appointment)
+            
+            # Important notes
+            context['important_notes'] = [
+                'Please arrive 15 minutes before your appointment',
+                'Bring your ID and insurance card',
+                'Bring any relevant medical records'
+            ]
+        else:
+            ics_content = None
+        
+        # Also create notification records in the database
+        from api.models.medical.appointment_notification import AppointmentNotification
+        notification = AppointmentNotification.create_status_update_notification(appointment)
+            
+        # Send the actual email
+        subject = f"Appointment Status Update - {appointment.appointment_id}"
+        to_email = appointment.patient.email
+        
+        # Generate HTML content
+        html_message = render_to_string('email/appointment_status_update.html', context)
+        plain_message = strip_tags(html_message)
+        
+        # Create email message
+        email = EmailMessage(
+            subject=subject,
+            body=html_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@phb.com'),
+            to=[to_email]
+        )
+        email.content_subtype = "html"
+        
+        # Add calendar attachment if necessary
+        calendar_attached = False
+        if appointment.status == 'confirmed' and ics_content:
+            email.attach(
+                f'appointment_{appointment.appointment_id}.ics',
+                ics_content,
+                'text/calendar'
+            )
+            calendar_attached = True
+            logger.info(f"Calendar attachment added for appointment {appointment.appointment_id}")
+        
+        # Send the email
+        email.send(fail_silently=False)
+        
+        # Update notification status
+        if notification:
+            notification.status = 'sent'
+            notification.sent_time = timezone.now()
+            notification.save()
+        
+        # Log the send status
+        logger.info(f"Appointment status update email sent to {to_email} for appointment {appointment.appointment_id}")
+        
+        # Return information about the send status
+        return {
+            'sent': True,
+            'to': to_email,
+            'subject': subject,
+            'template': 'appointment_status_update',
+            'appointment_id': appointment.appointment_id,
+            'status': appointment.status,
+            'notification_id': notification.id if notification else None,
+            'calendar_attached': calendar_attached,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error sending appointment status update email: {str(e)}")
+        return {
+            'sent': False,
+            'error': str(e),
+            'appointment_id': appointment.appointment_id,
+            'status': appointment.status,
+            'timestamp': timezone.now().isoformat()
+        }
+
+def send_appointment_reassignment_email(appointment, previous_doctor, cancellation_reason):
+    """
+    Send an email when an appointment is reassigned to another doctor
+    
+    Args:
+        appointment: The appointment object with the new doctor
+        previous_doctor: The original doctor who is no longer available
+        cancellation_reason: The reason the original doctor cannot fulfill the appointment
+    
+    Returns:
+        dict: Information about the email sending status
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', '').rstrip('/')
+        
+        # Use serializer to get formatted data
+        from api.serializers import AppointmentSerializer
+        serializer = AppointmentSerializer(appointment)
+        serializer_data = serializer.data
+        
+        # Patient's full name
+        patient_name = serializer_data.get('patient_name')
+        if not patient_name:
+            patient_name = appointment.patient.email
+        
+        # Previous doctor's name
+        previous_doctor_name = f"Dr. {previous_doctor.user.get_full_name()}"
+        
+        # New doctor's name
+        new_doctor_name = serializer_data.get('doctor_full_name')
+        
+        context = {
+            'patient_name': patient_name,
+            'appointment_id': appointment.appointment_id,
+            'previous_doctor_name': previous_doctor_name,
+            'doctor_name': new_doctor_name,
+            'department_name': serializer_data.get('department_name'),
+            'hospital_name': serializer_data.get('hospital_name'),
+            'appointment_date': serializer_data.get('formatted_date_time'),
+            'appointment_date_only': serializer_data.get('formatted_date'),
+            'appointment_time_only': serializer_data.get('formatted_time'),
+            'frontend_url': frontend_url,
+            'cancellation_reason': cancellation_reason,
+            'appointment_type': serializer_data.get('formatted_appointment_type'),
+            'calendar_link_included': True
+        }
+        
+        # Create notification record in the database
+        from api.models.medical.appointment_notification import AppointmentNotification
+        
+        notification = AppointmentNotification.objects.create(
+            appointment=appointment,
+            notification_type='email',
+            event_type='appointment_reassigned',
+            recipient=appointment.patient,
+            subject=f"Appointment Reassigned - {appointment.appointment_id}",
+            template_name='appointment_reassigned',
+            status='pending',
+            scheduled_time=timezone.now()
+        )
+        
+        # Create SMS notification if patient has phone
+        sms_notification = None
+        if appointment.patient.phone:
+            sms_notification = AppointmentNotification.objects.create(
+                appointment=appointment,
+                notification_type='sms',
+                event_type='appointment_reassigned',
+                recipient=appointment.patient,
+                subject=f"Appointment Reassigned - {appointment.appointment_id}",
+                message=(
+                    f"Your appointment has been reassigned from {previous_doctor_name} to {new_doctor_name}. "
+                    f"Same date and time: {appointment.appointment_date.strftime('%d/%m/%Y at %I:%M %p')}. "
+                    f"Please check your email for details."
+                ),
+                status='pending',
+                scheduled_time=timezone.now()
+            )
+        
+        # Render the email template
+        html_message = render_to_string('email/appointment_reassigned.html', context)
+        plain_message = strip_tags(html_message)
+        
+        # Create email message
+        email = EmailMessage(
+            subject=f'Appointment Reassigned - {appointment.appointment_id}',
+            body=html_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@phb.com'),
+            to=[appointment.patient.email]
+        )
+        email.content_subtype = "html"
+        
+        # Generate and attach the calendar file
+        calendar_attached = False
+        try:
+            ics_content = generate_ics_for_appointment(appointment)
+            email.attach(
+                f'appointment_{appointment.appointment_id}.ics',
+                ics_content,
+                'text/calendar'
+            )
+            logger.info(f"Calendar attachment generated for reassigned appointment {appointment.appointment_id}")
+            calendar_attached = True
+        except Exception as e:
+            logger.error(f"Failed to generate calendar attachment for reassigned appointment: {str(e)}")
+        
+        # Send the email
+        email.send(fail_silently=False)
+        
+        # Update notification status to 'sent'
+        notification.status = 'sent'
+        notification.sent_time = timezone.now()
+        notification.save()
+        
+        if sms_notification:
+            sms_notification.status = 'sent'
+            sms_notification.sent_time = timezone.now()
+            sms_notification.save()
+        
+        logger.info(f"Appointment reassignment email sent to {appointment.patient.email} for appointment {appointment.appointment_id}")
+        
+        return {
+            'success': True,
+            'recipient': appointment.patient.email,
+            'notification_id': notification.id,
+            'sms_notification_id': sms_notification.id if sms_notification else None,
+            'notification_status': 'sent',
+            'calendar_attached': calendar_attached,
+            'sent_at': timezone.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Failed to send appointment reassignment email: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e),
+            'recipient': getattr(appointment, 'patient', {}).get('email', 'unknown')
+        } 
+
+
+def send_payment_confirmation_email(payment_transaction):
+    """
+    Send a payment confirmation email after successful payment
+    
+    Args:
+        payment_transaction: The PaymentTransaction object with payment details
+    
+    Returns:
+        dict: Information about the email sending status
+    """
+    try:
+        
+        frontend_url = os.environ.get('NEXTJS_URL', '').rstrip('/')
+        
+        # Patient's name
+        patient = payment_transaction.patient
+        patient_name = patient.get_full_name() if hasattr(patient, 'get_full_name') else patient.email
+        
+        logger.debug(f"Sending payment confirmation email to {patient.email} for payment {payment_transaction.transaction_id}")
+        
+        # Build context based on whether appointment exists (payment-first vs appointment-first)
+        context = {
+            'patient_name': patient_name,
+            'payment_id': payment_transaction.transaction_id,
+            'payment_status': payment_transaction.get_payment_status_display(),
+            'amount': payment_transaction.amount_display,
+            'currency': payment_transaction.currency,
+            'payment_method': payment_transaction.get_payment_method_display(),
+            'payment_provider': payment_transaction.payment_provider.title(),
+            'payment_date': payment_transaction.completed_at or payment_transaction.created_at,
+            'frontend_url': frontend_url,
+        }
+        
+        # If appointment exists, add appointment details
+        if payment_transaction.appointment:
+            appointment = payment_transaction.appointment
+            
+            # Get formatted appointment data
+            from api.serializers import AppointmentSerializer
+            serializer = AppointmentSerializer(appointment)
+            serializer_data = serializer.data
+            
+            context.update({
+                'appointment_id': appointment.appointment_id,
+                'appointment_date': appointment.appointment_date,
+                'doctor_name': serializer_data.get('doctor_full_name'),
+                'department_name': serializer_data.get('department_name'),
+                'hospital_name': serializer_data.get('hospital_name'),
+                'has_appointment': True,
+                'appointment_type': serializer_data.get('formatted_appointment_type'),
+            })
+            
+            email_subject = f'Payment Confirmation - {appointment.appointment_id}'
+        else:
+            # Payment-first approach - no appointment yet
+            context.update({
+                'has_appointment': False,
+                'appointment_id': 'Pending',
+                'doctor_name': 'To be assigned',
+                'hospital_name': 'PHB Network Hospital',
+                'department_name': 'To be determined',
+            })
+            
+            email_subject = f'Payment Received - {payment_transaction.transaction_id}'
+        
+        
+        # Render Gmail-optimized HTML template (NO PLAIN TEXT!)
+        html_message = render_to_string('email/payment_confirmation_html_only.html', context)
+        
+        
+        # Create Gmail-friendly HTML-only email
+        email = EmailMessage(
+            subject=email_subject,
+            body=html_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@phb.com'),
+            to=[patient.email]
+        )
+        email.content_subtype = "html"  # Force HTML display
+        
+        # Gmail-specific headers to force HTML rendering
+        email.extra_headers = {
+            'Content-Type': 'text/html; charset=UTF-8',
+            'MIME-Version': '1.0',
+            'X-Priority': '3',
+            'X-MSMail-Priority': 'Normal',
+            'X-Mailer': 'PHB Hospital System',
+            'X-MimeOLE': 'Produced By PHB Medical Platform'
+        }
+        
+        
+        # Send the email
+        email.send(fail_silently=False)
+        
+        logger.debug(f"Payment confirmation email sent to {patient.email} for payment {payment_transaction.transaction_id}")
+        
+        return {
+            'success': True,
+            'recipient': patient.email,
+            'subject': email_subject,
+            'payment_id': payment_transaction.transaction_id,
+            'has_appointment': payment_transaction.appointment is not None,
+            'sent_at': timezone.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to send payment confirmation email: {str(e)}")
+        logger.error(f"Payment {payment_transaction.transaction_id} email error: {type(e).__name__}")
+        return {
+            'success': False,
+            'error': str(e),
+            'payment_id': payment_transaction.transaction_id,
+            'recipient': payment_transaction.patient.email if payment_transaction.patient else 'unknown'
+        }
+
+
+# ============================================================================
+# PRESCRIPTION REQUEST EMAIL FUNCTIONS
+# ============================================================================
+
+def send_prescription_request_confirmation(
+    patient_email,
+    patient_name,
+    request_reference,
+    medications,
+    urgency,
+    expected_days,
+    pharmacy_name,
+    pharmacy_address,
+    hospital_name,
+    request_date
+):
+    """
+    Send confirmation email to patient after submitting prescription request
+
+    Args:
+        patient_email (str): Patient's email address
+        patient_name (str): Patient's full name
+        request_reference (str): Prescription request reference number (e.g., REQ-123456)
+        medications (list): List of medication dicts with: name, strength, form, is_repeat
+        urgency (str): 'urgent' or 'routine'
+        expected_days (str): Expected processing time (e.g., "1-3" or "7-10")
+        pharmacy_name (str): Name of nominated pharmacy
+        pharmacy_address (str): Full address of pharmacy
+        hospital_name (str): Name of patient's primary hospital
+        request_date (datetime): When the request was submitted
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:3001').rstrip('/')
+
+        context = {
+            'patient_name': patient_name,
+            'request_reference': request_reference,
+            'request_date': request_date.strftime('%d %B, %Y at %I:%M %p'),
+            'urgency': urgency,
+            'medication_count': len(medications),
+            'medications': medications,
+            'pharmacy_name': pharmacy_name,
+            'pharmacy_address': pharmacy_address,
+            'hospital_name': hospital_name,
+            'frontend_url': frontend_url,
+        }
+
+        html_message = render_to_string('email/prescription_request_confirmation.html', context)
+        plain_message = strip_tags(html_message)
+
+        subject = f'Prescription Request Received - {request_reference}'
+        if urgency == 'urgent':
+            subject = f'🚨 URGENT Prescription Request Received - {request_reference}'
+
+        send_mail(
+            subject=subject,
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[patient_email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"Prescription request confirmation email sent to {patient_email} for {request_reference}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send prescription request confirmation email: {str(e)}")
+        return False
+
+
+def send_prescription_request_to_doctors(
+    hospital_id,
+    request_reference,
+    patient_name,
+    patient_hpn,
+    patient_dob,
+    patient_age,
+    allergies,
+    medications,
+    urgency,
+    request_notes,
+    pharmacy_name,
+    pharmacy_address,
+    request_date
+):
+    """
+    Notify all prescribing doctors in a hospital about new prescription request
+
+    Args:
+        hospital_id (int): ID of the hospital
+        request_reference (str): Prescription request reference number
+        patient_name (str): Patient's full name
+        patient_hpn (str): Patient's HPN (Health Person Number)
+        patient_dob (str): Patient's date of birth
+        patient_age (int): Patient's age in years
+        allergies (str): Known allergies (comma-separated) or None
+        medications (list): List of medication dicts with: name, strength, form, is_repeat, reason
+        urgency (str): 'urgent' or 'routine'
+        request_notes (str): Additional notes from patient
+        pharmacy_name (str): Name of nominated pharmacy
+        pharmacy_address (str): Full address of pharmacy
+        request_date (datetime): When the request was submitted
+
+    Returns:
+        dict: Information about the email sending status
+    """
+    try:
+        from api.models.medical.doctor import Doctor
+
+        # Get all doctors at the hospital who can prescribe
+        doctors = Doctor.objects.filter(
+            hospital_id=hospital_id,
+            can_prescribe=True,
+            user__is_active=True
+        ).select_related('user')
+
+        if not doctors.exists():
+            logger.warning(f"No prescribing doctors found for hospital {hospital_id}")
+            return {
+                'success': False,
+                'error': 'No prescribing doctors found',
+                'doctors_notified': 0
+            }
+
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:3001').rstrip('/')
+
+        sent_count = 0
+        failed_emails = []
+
+        for doctor in doctors:
+            try:
+                context = {
+                    'doctor_name': doctor.user.get_full_name(),
+                    'patient_name': patient_name,
+                    'patient_hpn': patient_hpn,
+                    'patient_dob': patient_dob,
+                    'patient_age': patient_age,
+                    'allergies': allergies,
+                    'request_reference': request_reference,
+                    'request_date': request_date.strftime('%d %B, %Y at %I:%M %p'),
+                    'urgency': urgency,
+                    'medication_count': len(medications),
+                    'medications': medications,
+                    'request_notes': request_notes,
+                    'pharmacy_name': pharmacy_name,
+                    'pharmacy_address': pharmacy_address,
+                    'frontend_url': frontend_url,
+                }
+
+                html_message = render_to_string('email/prescription_request_new_doctor.html', context)
+                plain_message = strip_tags(html_message)
+
+                subject = f'New Prescription Request - {request_reference}'
+                if urgency == 'urgent':
+                    subject = f'🚨 URGENT Prescription Request - {request_reference}'
+
+                send_mail(
+                    subject=subject,
+                    message=plain_message,
+                    from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+                    recipient_list=[doctor.user.email],
+                    html_message=html_message,
+                    fail_silently=False,
+                )
+
+                sent_count += 1
+                logger.info(f"Prescription request notification sent to Dr. {doctor.user.get_full_name()}")
+
+            except Exception as e:
+                logger.error(f"Failed to send email to doctor {doctor.user.email}: {str(e)}")
+                failed_emails.append({
+                    'doctor_email': doctor.user.email,
+                    'error': str(e)
+                })
+
+        return {
+            'success': True,
+            'doctors_notified': sent_count,
+            'total_doctors': doctors.count(),
+            'failed_emails': failed_emails
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to send prescription request to doctors: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e),
+            'doctors_notified': 0
+        }
+
+
+def send_prescription_approved_notification(
+    patient_email,
+    patient_name,
+    request_reference,
+    doctor_name,
+    medications,
+    clinical_notes,
+    pharmacy_name,
+    pharmacy_address,
+    pickup_deadline,
+    approval_date,
+    requires_payment=False,
+    is_exempt=False
+):
+    """
+    Notify patient that their prescription request has been approved
+
+    Args:
+        patient_email (str): Patient's email address
+        patient_name (str): Patient's full name
+        request_reference (str): Prescription request reference number
+        doctor_name (str): Name of prescribing doctor
+        medications (list): List of approved medication dicts with: name, strength, form, quantity, dosage_instructions, refills_allowed
+        clinical_notes (str): Clinical notes from prescriber
+        pharmacy_name (str): Name of nominated pharmacy
+        pharmacy_address (str): Full address of pharmacy
+        pickup_deadline (datetime): Deadline for collecting prescription
+        approval_date (datetime): When prescription was approved
+        requires_payment (bool): Whether patient needs to pay prescription fee
+        is_exempt (bool): Whether patient is exempt from prescription charges
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:3001').rstrip('/')
+
+        # Check if any medications have refills
+        has_refills = any(med.get('refills_allowed', 0) > 0 for med in medications)
+
+        context = {
+            'patient_name': patient_name,
+            'request_reference': request_reference,
+            'doctor_name': doctor_name,
+            'approval_date': approval_date.strftime('%d %B, %Y'),
+            'medications': medications,
+            'clinical_notes': clinical_notes,
+            'pharmacy_name': pharmacy_name,
+            'pharmacy_address': pharmacy_address,
+            'pickup_deadline': pickup_deadline.strftime('%d %B, %Y'),
+            'has_refills': has_refills,
+            'requires_payment': requires_payment,
+            'is_exempt': is_exempt,
+            'frontend_url': frontend_url,
+        }
+
+        html_message = render_to_string('email/prescription_approved.html', context)
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=f'Prescription Approved ✅ - {request_reference}',
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[patient_email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"Prescription approval email sent to {patient_email} for {request_reference}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send prescription approval email: {str(e)}")
+        return False
+
+
+def send_prescription_rejected_notification(
+    patient_email,
+    patient_name,
+    request_reference,
+    doctor_name,
+    rejection_reason,
+    medications,
+    requires_follow_up,
+    review_date
+):
+    """
+    Notify patient that their prescription request has been rejected
+
+    Args:
+        patient_email (str): Patient's email address
+        patient_name (str): Patient's full name
+        request_reference (str): Prescription request reference number
+        doctor_name (str): Name of reviewing doctor
+        rejection_reason (str): Detailed reason for rejection
+        medications (list): List of medication dicts with: name, strength, form, approved (bool)
+        requires_follow_up (bool): Whether follow-up appointment is required
+        review_date (datetime): When request was reviewed
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:3001').rstrip('/')
+
+        # Check if any medications were partially approved
+        has_partial_approval = any(med.get('approved', False) for med in medications)
+
+        context = {
+            'patient_name': patient_name,
+            'request_reference': request_reference,
+            'doctor_name': doctor_name,
+            'review_date': review_date.strftime('%d %B, %Y'),
+            'rejection_reason': rejection_reason,
+            'medications': medications,
+            'requires_follow_up': requires_follow_up,
+            'has_partial_approval': has_partial_approval,
+            'frontend_url': frontend_url,
+        }
+
+        html_message = render_to_string('email/prescription_rejected.html', context)
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=f'Prescription Request - Action Required ⚠️ - {request_reference}',
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[patient_email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"Prescription rejection email sent to {patient_email} for {request_reference}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send prescription rejection email: {str(e)}")
+        return False
+
+
+def send_prescription_ready_notification(
+    patient_email,
+    patient_name,
+    request_reference,
+    medications,
+    pharmacy_name,
+    pharmacy_address,
+    pharmacy_phone,
+    pharmacy_hours,
+    pickup_deadline,
+    requires_payment=False,
+    is_exempt=False
+):
+    """
+    Notify patient that their prescription is ready for collection at pharmacy
+
+    Args:
+        patient_email (str): Patient's email address
+        patient_name (str): Patient's full name
+        request_reference (str): Prescription request reference number
+        medications (list): List of medication dicts with: name, strength, form, quantity, refills_allowed
+        pharmacy_name (str): Name of pharmacy
+        pharmacy_address (str): Full address of pharmacy
+        pharmacy_phone (str): Pharmacy phone number or None
+        pharmacy_hours (str): Opening hours or None
+        pickup_deadline (datetime): Deadline for collecting prescription
+        requires_payment (bool): Whether patient needs to pay prescription fee
+        is_exempt (bool): Whether patient is exempt from prescription charges
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:3001').rstrip('/')
+
+        # Check if any medications have refills
+        has_refills = any(med.get('refills_allowed', 0) > 0 for med in medications)
+
+        context = {
+            'patient_name': patient_name,
+            'request_reference': request_reference,
+            'medication_count': len(medications),
+            'medications': medications,
+            'pharmacy_name': pharmacy_name,
+            'pharmacy_address': pharmacy_address,
+            'pharmacy_phone': pharmacy_phone,
+            'pharmacy_hours': pharmacy_hours,
+            'pickup_deadline': pickup_deadline.strftime('%d %B, %Y'),
+            'has_refills': has_refills,
+            'requires_payment': requires_payment,
+            'is_exempt': is_exempt,
+            'frontend_url': frontend_url,
+        }
+
+        html_message = render_to_string('email/prescription_ready_collection.html', context)
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=f'Prescription Ready for Collection 💊 - {request_reference}',
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[patient_email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"Prescription ready notification sent to {patient_email} for {request_reference}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send prescription ready notification: {str(e)}")
+        return False
+
+
+# ==================== PHARMACIST TRIAGE EMAIL FUNCTIONS ====================
+
+
+def send_prescription_request_to_pharmacist(
+    pharmacist_email,
+    pharmacist_name,
+    patient_name,
+    patient_hpn,
+    patient_dob,
+    patient_age,
+    request_reference,
+    request_date,
+    urgency,
+    medications,
+    pharmacy_name,
+    pharmacy_address,
+    triage_category,
+    triage_reason,
+    allergies=None,
+    current_medications=None,
+    request_notes=None
+):
+    """
+    Notify clinical pharmacist of a new prescription request for triage and review
+
+    Args:
+        pharmacist_email (str): Pharmacist's email address
+        pharmacist_name (str): Pharmacist's full name
+        patient_name (str): Patient's full name
+        patient_hpn (str): Patient's HPN number
+        patient_dob (str): Patient's date of birth (formatted)
+        patient_age (int): Patient's age in years
+        request_reference (str): Prescription request reference number
+        request_date (str): Date request was submitted (formatted)
+        urgency (str): 'urgent' or 'routine'
+        medications (list): List of medication dicts with: name, strength, form, quantity, dosage, is_repeat, reason
+        pharmacy_name (str): Name of nominated pharmacy
+        pharmacy_address (str): Full address of pharmacy
+        triage_category (str): Auto-assigned triage category (e.g., 'ROUTINE_REPEAT', 'URGENT_NEW')
+        triage_reason (str): Explanation of triage category assignment
+        allergies (str, optional): Known allergies
+        current_medications (str, optional): Current medications
+        request_notes (str, optional): Patient's additional notes
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:3001').rstrip('/')
+
+        context = {
+            'pharmacist_name': pharmacist_name,
+            'patient_name': patient_name,
+            'patient_hpn': patient_hpn,
+            'patient_dob': patient_dob,
+            'patient_age': patient_age,
+            'request_reference': request_reference,
+            'request_date': request_date,
+            'urgency': urgency,
+            'medication_count': len(medications),
+            'medications': medications,
+            'pharmacy_name': pharmacy_name,
+            'pharmacy_address': pharmacy_address,
+            'triage_category': triage_category,
+            'triage_reason': triage_reason,
+            'allergies': allergies,
+            'current_medications': current_medications,
+            'request_notes': request_notes,
+            'frontend_url': frontend_url,
+        }
+
+        html_message = render_to_string('email/prescription_request_new_pharmacist.html', context)
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=f'{"🚨 URGENT" if urgency == "urgent" else "💊 New"} Prescription Request for Review - {request_reference}',
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[pharmacist_email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"Pharmacist triage notification sent to {pharmacist_email} for {request_reference}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send pharmacist triage notification: {str(e)}")
+        return False
+
+
+def send_pharmacist_approved_prescription_to_doctor(
+    doctor_email,
+    doctor_name,
+    pharmacist_name,
+    patient_name,
+    patient_hpn,
+    patient_dob,
+    patient_age,
+    request_reference,
+    request_id,
+    request_date,
+    review_date,
+    medications,
+    pharmacy_name,
+    pharmacy_address,
+    pharmacist_notes=None,
+    drug_interactions=None,
+    monitoring_required=None,
+    allergies=None
+):
+    """
+    Notify physician that pharmacist has approved prescription and it's ready for final authorization
+
+    Args:
+        doctor_email (str): Doctor's email address
+        doctor_name (str): Doctor's full name
+        pharmacist_name (str): Pharmacist's full name
+        patient_name (str): Patient's full name
+        patient_hpn (str): Patient's HPN number
+        patient_dob (str): Patient's date of birth (formatted)
+        patient_age (int): Patient's age in years
+        request_reference (str): Prescription request reference number
+        request_id (str): Database ID of the request
+        request_date (str): Date request was submitted (formatted)
+        review_date (str): Date pharmacist reviewed (formatted)
+        medications (list): List of medication dicts with: name, strength, form, approved_quantity, approved_dosage, refills_allowed
+        pharmacy_name (str): Name of nominated pharmacy
+        pharmacy_address (str): Full address of pharmacy
+        pharmacist_notes (str, optional): Pharmacist's clinical notes
+        drug_interactions (str, optional): Drug interaction check results
+        monitoring_required (str, optional): Required monitoring (e.g., lab tests)
+        allergies (str, optional): Known allergies
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:3001').rstrip('/')
+
+        context = {
+            'doctor_name': doctor_name,
+            'pharmacist_name': pharmacist_name,
+            'patient_name': patient_name,
+            'patient_hpn': patient_hpn,
+            'patient_dob': patient_dob,
+            'patient_age': patient_age,
+            'request_reference': request_reference,
+            'request_id': request_id,
+            'request_date': request_date,
+            'review_date': review_date,
+            'medication_count': len(medications),
+            'medications': medications,
+            'pharmacy_name': pharmacy_name,
+            'pharmacy_address': pharmacy_address,
+            'pharmacist_notes': pharmacist_notes,
+            'drug_interactions': drug_interactions,
+            'monitoring_required': monitoring_required,
+            'allergies': allergies,
+            'frontend_url': frontend_url,
+        }
+
+        html_message = render_to_string('email/prescription_pharmacist_approved.html', context)
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=f'Pharmacist-Approved Prescription - Awaiting Your Authorization - {request_reference}',
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[doctor_email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"Pharmacist-approved prescription notification sent to {doctor_email} for {request_reference}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send pharmacist-approved prescription notification: {str(e)}")
+        return False
+
+
+def send_prescription_escalation_to_physician(
+    doctor_email,
+    doctor_name,
+    pharmacist_name,
+    patient_name,
+    patient_hpn,
+    patient_dob,
+    patient_age,
+    request_reference,
+    request_id,
+    request_date,
+    review_date,
+    urgency,
+    escalation_category,
+    escalation_reason,
+    medications,
+    pharmacy_name,
+    pharmacy_address,
+    clinical_concerns=None,
+    pharmacist_recommendation=None,
+    allergies=None,
+    current_medications=None,
+    medical_conditions=None,
+    request_notes=None
+):
+    """
+    Notify physician that prescription request requires escalation and direct physician review
+
+    Args:
+        doctor_email (str): Doctor's email address
+        doctor_name (str): Doctor's full name
+        pharmacist_name (str): Pharmacist's full name
+        patient_name (str): Patient's full name
+        patient_hpn (str): Patient's HPN number
+        patient_dob (str): Patient's date of birth (formatted)
+        patient_age (int): Patient's age in years
+        request_reference (str): Prescription request reference number
+        request_id (str): Database ID of the request
+        request_date (str): Date request was submitted (formatted)
+        review_date (str): Date pharmacist escalated (formatted)
+        urgency (str): 'urgent' or 'routine'
+        escalation_category (str): Escalation category (e.g., 'COMPLEX_CASE', 'CONTROLLED_SUBSTANCE')
+        escalation_reason (str): Detailed reason for escalation
+        medications (list): List of medication dicts with: name, strength, form, quantity, dosage, is_repeat, controlled, flagged, flag_reason
+        pharmacy_name (str): Name of nominated pharmacy
+        pharmacy_address (str): Full address of pharmacy
+        clinical_concerns (str, optional): Specific clinical concerns identified
+        pharmacist_recommendation (str, optional): Pharmacist's recommendation
+        allergies (str, optional): Known allergies
+        current_medications (str, optional): Current medications
+        medical_conditions (str, optional): Known medical conditions
+        request_notes (str, optional): Patient's additional notes
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:3001').rstrip('/')
+
+        context = {
+            'doctor_name': doctor_name,
+            'pharmacist_name': pharmacist_name,
+            'patient_name': patient_name,
+            'patient_hpn': patient_hpn,
+            'patient_dob': patient_dob,
+            'patient_age': patient_age,
+            'request_reference': request_reference,
+            'request_id': request_id,
+            'request_date': request_date,
+            'review_date': review_date,
+            'urgency': urgency,
+            'escalation_category': escalation_category,
+            'escalation_reason': escalation_reason,
+            'medication_count': len(medications),
+            'medications': medications,
+            'pharmacy_name': pharmacy_name,
+            'pharmacy_address': pharmacy_address,
+            'clinical_concerns': clinical_concerns,
+            'pharmacist_recommendation': pharmacist_recommendation,
+            'allergies': allergies,
+            'current_medications': current_medications,
+            'medical_conditions': medical_conditions,
+            'request_notes': request_notes,
+            'frontend_url': frontend_url,
+        }
+
+        html_message = render_to_string('email/prescription_needs_physician_review.html', context)
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=f'{"🚨 URGENT" if urgency == "urgent" else "⚕️"} Prescription Escalation - Physician Review Required - {request_reference}',
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[doctor_email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"Prescription escalation notification sent to {doctor_email} for {request_reference}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send prescription escalation notification: {str(e)}")
+        return False
+
+
+# =============================================================================
+# PROFESSIONAL REGISTRATION EMAIL FUNCTIONS
+# =============================================================================
+
+def send_professional_application_confirmation_email(user, application, password=None):
+    """
+    Send confirmation email when a professional submits their application.
+
+    Args:
+        user: User object who submitted the application
+        application: ProfessionalApplication object
+        password: Optional password (for new users only)
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:5173').rstrip('/')
+
+        context = {
+            'user_name': f"{user.first_name} {user.last_name}",
+            'email': user.email,
+            'professional_type': application.get_professional_type_display(),
+            'application_number': application.application_reference,  # Use application_reference
+            'application_reference': application.application_reference,
+            'submitted_date': application.submitted_date if application.submitted_date else application.created_at,
+            'registration_body': application.home_registration_body,
+            'registration_number': application.home_registration_number,
+            'password': password,  # Only included for new users
+            'is_new_user': password is not None,
+            'frontend_url': frontend_url,
+            'dashboard_url': f"{frontend_url}/registry/dashboard",
+            'current_year': timezone.now().year,
+            'is_draft': application.status == 'draft',
+        }
+
+        # Try to use a dedicated template, fall back to inline HTML
+        try:
+            html_message = render_to_string('email/professional_application_confirmation.html', context)
+        except:
+            # Fallback HTML template
+            login_credentials = f"""
+            <div style="background: #fff3cd; padding: 20px; border-left: 4px solid #ffc107; margin: 20px 0; border-radius: 4px;">
+                <h3 style="color: #856404; margin-top: 0;">🔐 Your Login Credentials</h3>
+                <p style="margin: 10px 0;"><strong>Username:</strong> {user.email}</p>
+                <p style="margin: 10px 0;"><strong>Password:</strong> {password}</p>
+                <p style="color: #856404; margin: 10px 0; font-size: 14px;">
+                    ⚠️ Please save these credentials securely.
+                </p>
+                <p style="color: #d9534f; margin: 10px 0; font-size: 14px; font-weight: bold;">
+                    📌 IMPORTANT: You must LOG IN with these credentials before accessing your dashboard to track your application.
+                </p>
+            </div>
+            """ if password else ""
+
+            html_message = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8f9fa; padding: 20px;">
+                <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <div style="text-align: center; padding-bottom: 20px; border-bottom: 2px solid #007bff;">
+                        <h1 style="color: #007bff; margin: 0;">PHB National Professional Registry</h1>
+                        <p style="color: #6c757d; margin: 5px 0;">Nigerian Healthcare Professional Licensing</p>
+                    </div>
+
+                    <h2 style="color: #28a745; margin-top: 30px;">✅ Application Created Successfully</h2>
+
+                    <p>Dear {context['user_name']},</p>
+
+                    <p>Thank you for starting your professional registration application with the PHB National Registry.</p>
+
+                    {'<p style="background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; border-radius: 4px;"><strong>📌 Next Step Required:</strong> Please upload all required verification documents and submit your application for review.</p>' if context['is_draft'] else ''}
+
+                    <div style="background: #e7f3ff; padding: 20px; border-radius: 4px; margin: 20px 0;">
+                        <h3 style="color: #0056b3; margin-top: 0;">📋 Application Details</h3>
+                        <table style="width: 100%; font-size: 14px;">
+                            <tr>
+                                <td style="padding: 8px 0; color: #6c757d;"><strong>Application Number:</strong></td>
+                                <td style="padding: 8px 0;">{context['application_number']}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px 0; color: #6c757d;"><strong>Reference Number:</strong></td>
+                                <td style="padding: 8px 0;">{context['application_reference']}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px 0; color: #6c757d;"><strong>Professional Type:</strong></td>
+                                <td style="padding: 8px 0;">{context['professional_type']}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px 0; color: #6c757d;"><strong>Home Registration:</strong></td>
+                                <td style="padding: 8px 0;">{context['registration_body']} - {context['registration_number']}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 8px 0; color: #6c757d;"><strong>Submitted On:</strong></td>
+                                <td style="padding: 8px 0;">{context['submitted_date'].strftime('%B %d, %Y at %I:%M %p')}</td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    {login_credentials}
+
+                    <div style="background: #d1ecf1; padding: 20px; border-left: 4px solid #17a2b8; margin: 20px 0; border-radius: 4px;">
+                        <h3 style="color: #0c5460; margin-top: 0;">📝 Next Steps</h3>
+                        <ol style="color: #0c5460; margin: 10px 0; padding-left: 20px;">
+                            {'<li style="margin: 10px 0;">Login to your dashboard using the credentials above</li><li style="margin: 10px 0;">Upload all required verification documents</li><li style="margin: 10px 0;">Review and submit your application</li><li style="margin: 10px 0;">Our team will verify your credentials within 5-10 business days</li>' if context['is_draft'] else '<li style="margin: 10px 0;">Our review team will verify your credentials and documents</li><li style="margin: 10px 0;">You may be contacted if additional documentation is needed</li><li style="margin: 10px 0;">Review typically takes 5-10 business days</li><li style="margin: 10px 0;">You\'ll receive an email notification once review is complete</li>'}
+                        </ol>
+                    </div>
+
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="{context['dashboard_url']}" style="display: inline-block; background: #007bff; color: white; padding: 14px 28px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+                            Track Application Status
+                        </a>
+                    </div>
+
+                    <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
+
+                    <p style="color: #6c757d; font-size: 14px;">
+                        <strong>Need Help?</strong><br>
+                        If you have questions about your application, please contact our support team or visit your dashboard.
+                    </p>
+
+                    <p style="color: #6c757d; font-size: 12px; margin-top: 20px;">
+                        This is an automated message from PHB National Professional Registry.<br>
+                        © {context['current_year']} PHB. All rights reserved.
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=f"✅ Professional Application Submitted - {application.application_reference}",
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"Professional application confirmation email sent to {user.email} for {application.application_reference}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send professional application confirmation email: {str(e)}")
+        return False
+
+
+def send_new_application_alert_to_admins(application):
+    """
+    Send alert to admin staff when a new professional application is submitted.
+
+    Args:
+        application: ProfessionalApplication object
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        # Get all staff users who should receive notifications
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        admin_emails = list(User.objects.filter(
+            is_staff=True,
+            is_active=True
+        ).values_list('email', flat=True))
+
+        if not admin_emails:
+            logger.warning("No admin users found to send new application notification")
+            return False
+
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:5173').rstrip('/')
+        admin_url = f"{frontend_url}/admin/registry/applications/{application.id}"
+
+        context = {
+            'applicant_name': f"{application.first_name} {application.last_name}",
+            'professional_type': application.get_professional_type_display(),
+            'application_number': application.application_reference,  # Use application_reference
+            'application_reference': application.application_reference,
+            'submitted_date': application.submitted_date,
+            'registration_body': application.home_registration_body,
+            'registration_number': application.home_registration_number,
+            'email': application.email,
+            'phone': application.phone,
+            'specialization': application.specialization,
+            'years_experience': application.years_of_experience,
+            'admin_url': admin_url,
+            'current_year': timezone.now().year,
+        }
+
+        # Try to use a dedicated template, fall back to inline HTML
+        try:
+            html_message = render_to_string('email/admin_new_application_alert.html', context)
+        except:
+            # Fallback HTML template
+            html_message = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8f9fa; padding: 20px;">
+                <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <div style="background: #007bff; color: white; padding: 20px; border-radius: 4px; text-align: center;">
+                        <h1 style="margin: 0; font-size: 24px;">🆕 New Professional Application</h1>
+                        <p style="margin: 10px 0 0 0; font-size: 14px;">PHB National Registry - Admin Alert</p>
+                    </div>
+
+                    <div style="background: #fff3cd; padding: 15px; margin: 20px 0; border-left: 4px solid #ffc107; border-radius: 4px;">
+                        <p style="margin: 0; color: #856404;">
+                            <strong>⚠️ Action Required:</strong> A new professional registration application requires review.
+                        </p>
+                    </div>
+
+                    <h2 style="color: #0056b3; margin-top: 20px;">Applicant Details</h2>
+
+                    <table style="width: 100%; font-size: 14px; margin: 20px 0;">
+                        <tr style="background: #f8f9fa;">
+                            <td style="padding: 12px; border: 1px solid #dee2e6;"><strong>Name:</strong></td>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;">{context['applicant_name']}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;"><strong>Professional Type:</strong></td>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;">{context['professional_type']}</td>
+                        </tr>
+                        <tr style="background: #f8f9fa;">
+                            <td style="padding: 12px; border: 1px solid #dee2e6;"><strong>Specialization:</strong></td>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;">{context['specialization']}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;"><strong>Experience:</strong></td>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;">{context['years_experience']} years</td>
+                        </tr>
+                        <tr style="background: #f8f9fa;">
+                            <td style="padding: 12px; border: 1px solid #dee2e6;"><strong>Home Registration:</strong></td>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;">{context['registration_body']} - {context['registration_number']}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;"><strong>Email:</strong></td>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;">{context['email']}</td>
+                        </tr>
+                        <tr style="background: #f8f9fa;">
+                            <td style="padding: 12px; border: 1px solid #dee2e6;"><strong>Phone:</strong></td>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;">{context['phone']}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;"><strong>Application Number:</strong></td>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;"><strong>{context['application_number']}</strong></td>
+                        </tr>
+                        <tr style="background: #f8f9fa;">
+                            <td style="padding: 12px; border: 1px solid #dee2e6;"><strong>Submitted:</strong></td>
+                            <td style="padding: 12px; border: 1px solid #dee2e6;">{context['submitted_date'].strftime('%B %d, %Y at %I:%M %p')}</td>
+                        </tr>
+                    </table>
+
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="{context['admin_url']}" style="display: inline-block; background: #28a745; color: white; padding: 14px 28px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+                            Review Application →
+                        </a>
+                    </div>
+
+                    <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
+
+                    <p style="color: #6c757d; font-size: 12px; margin: 0;">
+                        This is an automated admin notification from PHB National Professional Registry.<br>
+                        © {context['current_year']} PHB. All rights reserved.
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=f"🆕 New Professional Application: {application.get_professional_type_display()} - {application.application_reference}",
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=admin_emails,
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"New application alert sent to {len(admin_emails)} admins for {application.application_reference}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send new application alert to admins: {str(e)}")
+        return False
+
+
+def send_professional_application_approved_email(user, application, license_number):
+    """
+    Send email when a professional application is approved and license is issued.
+
+    Args:
+        user: User object
+        application: ProfessionalApplication object
+        license_number: The issued PHB license number
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:5173').rstrip('/')
+
+        context = {
+            'user_name': f"{user.first_name} {user.last_name}",
+            'professional_type': application.get_professional_type_display(),
+            'license_number': license_number,
+            'application_number': application.application_reference,  # Use application_reference
+            'approved_date': application.reviewed_date or timezone.now(),
+            'specialization': application.specialization,
+            'registration_body': application.home_registration_body,
+            'registration_number': application.home_registration_number,
+            'frontend_url': frontend_url,
+            'dashboard_url': f"{frontend_url}/professional/dashboard",
+            'certificate_url': f"{frontend_url}/professional/certificate",
+            'current_year': timezone.now().year,
+        }
+
+        # Try to use a dedicated template, fall back to inline HTML
+        try:
+            html_message = render_to_string('email/professional_application_approved.html', context)
+        except:
+            # Fallback HTML template
+            html_message = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8f9fa; padding: 20px;">
+                <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <div style="background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; border-radius: 4px; text-align: center;">
+                        <h1 style="margin: 0; font-size: 32px;">🎉 Congratulations!</h1>
+                        <p style="margin: 15px 0 0 0; font-size: 18px;">Your Professional License Has Been Approved</p>
+                    </div>
+
+                    <p style="font-size: 16px; margin: 30px 0;">Dear {context['user_name']},</p>
+
+                    <p style="font-size: 16px; line-height: 1.6;">
+                        We are pleased to inform you that your application for registration with the PHB National Professional Registry has been <strong>APPROVED</strong>!
+                    </p>
+
+                    <div style="background: #d4edda; padding: 25px; border-left: 4px solid #28a745; margin: 30px 0; border-radius: 4px; text-align: center;">
+                        <h2 style="color: #155724; margin: 0 0 15px 0;">Your PHB License Number</h2>
+                        <div style="background: white; padding: 20px; border-radius: 4px; font-size: 28px; font-weight: bold; color: #28a745; letter-spacing: 2px; font-family: 'Courier New', monospace;">
+                            {context['license_number']}
+                        </div>
+                        <p style="color: #155724; margin: 15px 0 0 0; font-size: 14px;">
+                            Please keep this number for your records
+                        </p>
+                    </div>
+
+                    <h3 style="color: #0056b3; margin: 30px 0 15px 0;">License Details</h3>
+                    <table style="width: 100%; font-size: 14px;">
+                        <tr>
+                            <td style="padding: 10px 0; color: #6c757d;"><strong>Professional Type:</strong></td>
+                            <td style="padding: 10px 0;">{context['professional_type']}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 10px 0; color: #6c757d;"><strong>Specialization:</strong></td>
+                            <td style="padding: 10px 0;">{context['specialization']}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 10px 0; color: #6c757d;"><strong>Application Number:</strong></td>
+                            <td style="padding: 10px 0;">{context['application_number']}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 10px 0; color: #6c757d;"><strong>Approval Date:</strong></td>
+                            <td style="padding: 10px 0;">{context['approved_date'].strftime('%B %d, %Y')}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 10px 0; color: #6c757d;"><strong>Home Registration:</strong></td>
+                            <td style="padding: 10px 0;">{context['registration_body']} - {context['registration_number']}</td>
+                        </tr>
+                    </table>
+
+                    <div style="background: #cfe2ff; padding: 20px; border-left: 4px solid #0d6efd; margin: 30px 0; border-radius: 4px;">
+                        <h3 style="color: #084298; margin-top: 0;">✅ What's Next?</h3>
+                        <ul style="color: #084298; margin: 10px 0; padding-left: 20px; line-height: 1.8;">
+                            <li>Access your professional dashboard</li>
+                            <li>Download your digital certificate</li>
+                            <li>Update your practice information</li>
+                            <li>Start accepting patient appointments</li>
+                            <li>Access prescription triage system</li>
+                        </ul>
+                    </div>
+
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="{context['dashboard_url']}" style="display: inline-block; background: #007bff; color: white; padding: 14px 28px; text-decoration: none; border-radius: 4px; font-weight: bold; margin: 5px;">
+                            Access Dashboard →
+                        </a>
+                        <a href="{context['certificate_url']}" style="display: inline-block; background: #28a745; color: white; padding: 14px 28px; text-decoration: none; border-radius: 4px; font-weight: bold; margin: 5px;">
+                            Download Certificate →
+                        </a>
+                    </div>
+
+                    <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
+
+                    <p style="color: #6c757d; font-size: 14px;">
+                        <strong>Important Notice:</strong><br>
+                        Your license is now active and searchable in the public registry. Patients and healthcare facilities can verify your credentials using your license number.
+                    </p>
+
+                    <p style="color: #6c757d; font-size: 12px; margin-top: 20px;">
+                        This is an automated message from PHB National Professional Registry.<br>
+                        © {context['current_year']} PHB. All rights reserved.
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=f"🎉 Your PHB Professional License Has Been Approved - {license_number}",
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"Professional application approval email sent to {user.email} with license {license_number}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send professional application approval email: {str(e)}")
+        return False
+
+
+def send_professional_application_rejected_email(user, application, reason):
+    """
+    Send email when a professional application is rejected.
+
+    Args:
+        user: User object
+        application: ProfessionalApplication object
+        reason: Rejection reason
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:5173').rstrip('/')
+
+        context = {
+            'user_name': f"{user.first_name} {user.last_name}",
+            'professional_type': application.get_professional_type_display(),
+            'application_number': application.application_reference,  # Use application_reference
+            'rejection_reason': reason,
+            'reviewed_date': application.reviewed_date or timezone.now(),
+            'frontend_url': frontend_url,
+            'reapply_url': f"{frontend_url}/registry/apply",
+            'support_url': f"{frontend_url}/support",
+            'current_year': timezone.now().year,
+        }
+
+        # Try to use a dedicated template, fall back to inline HTML
+        try:
+            html_message = render_to_string('email/professional_application_rejected.html', context)
+        except:
+            # Fallback HTML template
+            html_message = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f8f9fa; padding: 20px;">
+                <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                    <div style="background: #dc3545; color: white; padding: 20px; border-radius: 4px; text-align: center;">
+                        <h1 style="margin: 0; font-size: 24px;">Application Status Update</h1>
+                        <p style="margin: 10px 0 0 0; font-size: 14px;">PHB National Professional Registry</p>
+                    </div>
+
+                    <p style="font-size: 16px; margin: 30px 0;">Dear {context['user_name']},</p>
+
+                    <p style="font-size: 16px; line-height: 1.6;">
+                        Thank you for your interest in registering with the PHB National Professional Registry. After careful review, we regret to inform you that your application <strong>cannot be approved</strong> at this time.
+                    </p>
+
+                    <div style="background: #f8d7da; padding: 20px; border-left: 4px solid #dc3545; margin: 20px 0; border-radius: 4px;">
+                        <h3 style="color: #721c24; margin-top: 0;">Reason for Rejection</h3>
+                        <p style="color: #721c24; margin: 0; line-height: 1.6;">
+                            {context['rejection_reason']}
+                        </p>
+                    </div>
+
+                    <div style="background: #d1ecf1; padding: 20px; border-left: 4px solid #17a2b8; margin: 20px 0; border-radius: 4px;">
+                        <h3 style="color: #0c5460; margin-top: 0;">What You Can Do</h3>
+                        <ul style="color: #0c5460; margin: 10px 0; padding-left: 20px; line-height: 1.8;">
+                            <li>Review the rejection reason carefully</li>
+                            <li>Address the issues mentioned</li>
+                            <li>Gather any missing or corrected documentation</li>
+                            <li>Contact our support team if you need clarification</li>
+                            <li>Submit a new application when ready</li>
+                        </ul>
+                    </div>
+
+                    <table style="width: 100%; font-size: 14px; margin: 20px 0;">
+                        <tr>
+                            <td style="padding: 8px 0; color: #6c757d;"><strong>Application Number:</strong></td>
+                            <td style="padding: 8px 0;">{context['application_number']}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 0; color: #6c757d;"><strong>Professional Type:</strong></td>
+                            <td style="padding: 8px 0;">{context['professional_type']}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px 0; color: #6c757d;"><strong>Review Date:</strong></td>
+                            <td style="padding: 8px 0;">{context['reviewed_date'].strftime('%B %d, %Y')}</td>
+                        </tr>
+                    </table>
+
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="{context['support_url']}" style="display: inline-block; background: #007bff; color: white; padding: 14px 28px; text-decoration: none; border-radius: 4px; font-weight: bold; margin: 5px;">
+                            Contact Support
+                        </a>
+                        <a href="{context['reapply_url']}" style="display: inline-block; background: #28a745; color: white; padding: 14px 28px; text-decoration: none; border-radius: 4px; font-weight: bold; margin: 5px;">
+                            Submit New Application
+                        </a>
+                    </div>
+
+                    <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
+
+                    <p style="color: #6c757d; font-size: 14px;">
+                        We appreciate your interest in the PHB National Professional Registry. If you have questions about this decision, please don't hesitate to contact our support team.
+                    </p>
+
+                    <p style="color: #6c757d; font-size: 12px; margin-top: 20px;">
+                        This is an automated message from PHB National Professional Registry.<br>
+                        © {context['current_year']} PHB. All rights reserved.
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=f"Application Status Update - {application.application_reference}",
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"Professional application rejection email sent to {user.email} for {application.application_reference}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send professional application rejection email: {str(e)}")
+        return False
+
+
+def send_document_rejection_email(application, document):
+    """
+    Send email notification when a document is rejected.
+    Notifies applicant that specific document needs resubmission.
+
+    Args:
+        application: ProfessionalApplication instance
+        document: ApplicationDocument instance that was rejected
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        user = application.user
+        frontend_url = os.environ.get('NEXTJS_URL', 'http://localhost:3001').rstrip('/')
+
+        # Format deadline
+        deadline_str = document.resubmission_deadline.strftime('%B %d, %Y at %I:%M %p') if document.resubmission_deadline else 'Not set'
+
+        context = {
+            'applicant_name': application.get_full_name(),
+            'application_reference': application.application_reference,
+            'document_type_display': document.get_document_type_display(),
+            'rejection_reason': document.verification_notes,
+            'rejection_count': document.rejection_count,
+            'max_attempts': document.max_rejection_attempts,
+            'attempts_remaining': document.attempts_remaining,
+            'resubmission_deadline': deadline_str,
+            'application_url': f'{frontend_url}/registry/applications/{application.id}',
+            'support_email': 'support@phb.ng',
+            'current_year': timezone.now().year,
+        }
+
+        # HTML email template
+        html_message = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8f9fa;">
+            <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <!-- Header with alert icon -->
+                <div style="text-align: center; margin-bottom: 30px;">
+                    <div style="background: #dc3545; width: 60px; height: 60px; border-radius: 50%; margin: 0 auto 15px; display: flex; align-items: center; justify-content: center; color: white; font-size: 30px;">
+                        ⚠️
+                    </div>
+                    <h2 style="color: #dc3545; margin: 0;">Document Rejected - Action Required</h2>
+                </div>
+
+                <p>Dear {context['applicant_name']},</p>
+
+                <p>A document in your professional registration application <strong>{context['application_reference']}</strong> has been rejected and requires your attention.</p>
+
+                <!-- Document Details -->
+                <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                    <p style="margin: 0 0 10px 0; font-weight: bold; color: #856404;">Rejected Document:</p>
+                    <p style="margin: 0; font-size: 16px;"><strong>{context['document_type_display']}</strong></p>
+                </div>
+
+                <!-- Rejection Reason -->
+                <div style="background: #f8d7da; border-left: 4px solid #dc3545; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                    <p style="margin: 0 0 10px 0; font-weight: bold; color: #721c24;">Reason for Rejection:</p>
+                    <p style="margin: 0; color: #721c24;">{context['rejection_reason']}</p>
+                </div>
+
+                <!-- Attempt Information -->
+                <div style="background: #d1ecf1; border-left: 4px solid #0c5460; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <tr>
+                            <td style="padding: 5px 0; color: #0c5460;"><strong>Attempts Remaining:</strong></td>
+                            <td style="padding: 5px 0; text-align: right;"><strong>{context['attempts_remaining']} of {context['max_attempts']}</strong></td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 5px 0; color: #0c5460;"><strong>Resubmission Deadline:</strong></td>
+                            <td style="padding: 5px 0; text-align: right;"><strong>{context['resubmission_deadline']}</strong></td>
+                        </tr>
+                    </table>
+                </div>
+
+                <!-- Action Required -->
+                <div style="background: #e2e3e5; padding: 20px; border-radius: 4px; margin: 25px 0;">
+                    <h3 style="margin: 0 0 15px 0; color: #383d41;">What You Need to Do:</h3>
+                    <ol style="margin: 0; padding-left: 20px; color: #383d41;">
+                        <li style="margin-bottom: 10px;">Review the rejection reason carefully</li>
+                        <li style="margin-bottom: 10px;">Prepare a corrected version of the document</li>
+                        <li style="margin-bottom: 10px;">Log in to your application and upload the new document</li>
+                        <li>Submit before the deadline to avoid application rejection</li>
+                    </ol>
+                </div>
+
+                <!-- Warning if low attempts -->
+                {f'<div style="background: #fff3cd; padding: 15px; border-radius: 4px; margin: 20px 0;"><p style="margin: 0; color: #856404;"><strong>⚠️ Important:</strong> You have only {context["attempts_remaining"]} attempt(s) remaining. Please ensure the document meets all requirements before resubmitting.</p></div>' if context['attempts_remaining'] <= 1 else ''}
+
+                <!-- CTA Button -->
+                <div style="text-align: center; margin: 30px 0;">
+                    <a href="{context['application_url']}" style="display: inline-block; background: #007bff; color: white; padding: 14px 28px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+                        Upload Corrected Document
+                    </a>
+                </div>
+
+                <!-- Support Information -->
+                <hr style="margin: 30px 0; border: none; border-top: 1px solid #dee2e6;">
+
+                <p style="color: #6c757d; font-size: 14px;">
+                    <strong>Need Help?</strong><br>
+                    If you have questions about why your document was rejected or need assistance, please contact our support team at
+                    <a href="mailto:{context['support_email']}" style="color: #007bff;">{context['support_email']}</a>
+                </p>
+
+                <p style="color: #6c757d; font-size: 12px; margin-top: 20px;">
+                    This is an automated notification from PHB National Professional Registry.<br>
+                    Application Reference: {context['application_reference']}<br>
+                    © {context['current_year']} PHB. All rights reserved.
+                </p>
+            </div>
+        </body>
+        </html>
+        """
+
+        plain_message = strip_tags(html_message)
+
+        send_mail(
+            subject=f"Document Rejected - Action Required: {application.application_reference}",
+            message=plain_message,
+            from_email=os.environ.get('DEFAULT_FROM_EMAIL'),
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+
+        logger.info(f"Document rejection email sent to {user.email} for document {document.document_type} in application {application.application_reference}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send document rejection email: {str(e)}")
+        return False
+
+
+def send_application_approved_email(application, registry_entry):
+    """
+    Send email notification when a professional application is approved.
+
+    Args:
+        application: ProfessionalApplication instance
+        registry_entry: PHBProfessionalRegistry instance
+    """
+    subject = f"Application Approved - PHB Professional Registry"
+
+    # Build context with approval details
+    context = {
+        'applicant_name': application.get_full_name(),
+        'professional_type': application.get_professional_type_display(),
+        'specialization': application.get_specialization_display() if hasattr(application, 'get_specialization_display') else application.specialization or '',
+        'license_number': registry_entry.phb_license_number,
+        'issue_date': registry_entry.license_issue_date.strftime('%B %d, %Y'),
+        'expiry_date': registry_entry.license_expiry_date.strftime('%B %d, %Y') if registry_entry.license_expiry_date else 'N/A',
+        'application_reference': application.application_reference,
+        'registry_url': f"{settings.FRONTEND_URL}/registry/professionals/{registry_entry.id}",
+        'dashboard_url': f"{settings.FRONTEND_URL}/professional/dashboard",
+    }
+
+    # Plain text message
+    plain_message = f"""
+Congratulations {context['applicant_name']}!
+
+Your application for PHB Professional Registry has been APPROVED!
+
+LICENSE DETAILS:
+License Number: {context['license_number']}
+Professional Type: {context['professional_type']}
+Specialization: {context['specialization']}
+Issue Date: {context['issue_date']}
+Expiry Date: {context['expiry_date']}
+
+Your profile is now live in the PHB National Professional Registry and can be searched by patients and healthcare facilities.
+
+NEXT STEPS:
+1. Log in to your professional dashboard
+2. Complete your public profile and biography
+3. Update your practice information and services
+4. Start accepting patient consultations
+
+Access your dashboard: {context['dashboard_url']}
+View your public profile: {context['registry_url']}
+
+Congratulations on joining the PHB Professional Registry!
+
+Best regards,
+PHB Registration Team
+"""
+
+    # HTML email template - Minimal, professional design (AWS/Stripe/NHS style)
+    html_message = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {{ margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333333; background-color: #f4f4f4; }}
+        .container {{ max-width: 600px; margin: 0 auto; background: #ffffff; }}
+
+        /* Simple Header */
+        .header {{
+            padding: 32px 40px 24px;
+            border-bottom: 2px solid #000000;
+        }}
+        .logo {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #000000;
+            margin: 0;
+        }}
+        .subtitle {{
+            font-size: 14px;
+            color: #666666;
+            margin: 4px 0 0 0;
+        }}
+
+        /* Content */
+        .content {{ padding: 40px; }}
+        .title {{
+            font-size: 20px;
+            font-weight: 600;
+            color: #000000;
+            margin: 0 0 24px 0;
+        }}
+        .text {{
+            font-size: 15px;
+            color: #333333;
+            margin: 0 0 16px 0;
+            line-height: 1.5;
+        }}
+
+        /* License Information Box */
+        .info-box {{
+            background: #f9f9f9;
+            border: 1px solid #e5e5e5;
+            padding: 24px;
+            margin: 24px 0;
+        }}
+        .info-heading {{
+            font-size: 12px;
+            font-weight: 600;
+            color: #666666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 0 0 16px 0;
+        }}
+        .license-number {{
+            font-size: 18px;
+            font-weight: 700;
+            color: #000000;
+            margin: 0 0 20px 0;
+            font-family: 'Courier New', monospace;
+        }}
+
+        /* Details Table */
+        .details-table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        .details-table td {{
+            padding: 8px 0;
+            font-size: 14px;
+            border-bottom: 1px solid #f0f0f0;
+        }}
+        .details-table td:first-child {{
+            color: #666666;
+            width: 40%;
+        }}
+        .details-table td:last-child {{
+            color: #000000;
+            font-weight: 500;
+        }}
+        .details-table tr:last-child td {{
+            border-bottom: none;
+        }}
+
+        /* Next Steps */
+        .steps-section {{
+            margin: 32px 0;
+        }}
+        .steps-heading {{
+            font-size: 16px;
+            font-weight: 600;
+            color: #000000;
+            margin: 0 0 16px 0;
+        }}
+        .step {{
+            margin-bottom: 16px;
+            font-size: 14px;
+            line-height: 1.5;
+        }}
+        .step strong {{
+            color: #000000;
+        }}
+
+        /* Button */
+        .button {{
+            display: inline-block;
+            background: #000000;
+            color: #ffffff;
+            text-decoration: none;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 500;
+            margin: 24px 0 8px 0;
+        }}
+        .button-link {{
+            display: inline-block;
+            color: #000000;
+            text-decoration: underline;
+            font-size: 14px;
+            margin: 8px 16px 0 0;
+        }}
+
+        /* Footer */
+        .footer {{
+            padding: 32px 40px;
+            background: #f9f9f9;
+            border-top: 1px solid #e5e5e5;
+            font-size: 12px;
+            color: #666666;
+            line-height: 1.6;
+        }}
+        .footer p {{
+            margin: 0 0 8px 0;
+        }}
+        .footer a {{
+            color: #000000;
+            text-decoration: none;
+        }}
+        .footer-divider {{
+            height: 1px;
+            background: #e5e5e5;
+            margin: 16px 0;
+        }}
+
+        @media only screen and (max-width: 600px) {{
+            .header, .content, .footer {{ padding: 24px 20px; }}
+            .button {{ display: block; text-align: center; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">PHB</div>
+            <div class="subtitle">Public Health Bureau - Professional Registry</div>
+        </div>
+
+        <!-- Content -->
+        <div class="content">
+            <h1 class="title">Application Approved</h1>
+
+            <p class="text">
+                Dear {context['applicant_name']},
+            </p>
+
+            <p class="text">
+                Your application to the PHB Professional Registry has been approved. Your professional license has been issued and is detailed below.
+            </p>
+
+            <!-- License Information -->
+            <div class="info-box">
+                <div class="info-heading">Professional License</div>
+                <div class="license-number">{context['license_number']}</div>
+
+                <table class="details-table">
+                    <tr>
+                        <td>License Holder</td>
+                        <td>{context['applicant_name']}</td>
+                    </tr>
+                    <tr>
+                        <td>Professional Type</td>
+                        <td>{context['professional_type']}</td>
+                    </tr>
+                    <tr>
+                        <td>Specialization</td>
+                        <td>{context['specialization']}</td>
+                    </tr>
+                    <tr>
+                        <td>Issue Date</td>
+                        <td>{context['issue_date']}</td>
+                    </tr>
+                    <tr>
+                        <td>Valid Until</td>
+                        <td>{context['expiry_date']}</td>
+                    </tr>
+                </table>
+            </div>
+
+            <p class="text">
+                Your profile is now live in the national registry and searchable by patients and healthcare facilities.
+            </p>
+
+            <!-- Next Steps -->
+            <div class="steps-section">
+                <div class="steps-heading">Next Steps</div>
+
+                <div class="step">
+                    <strong>1. Complete your profile:</strong> Add your biography, services, and practice information to help patients find you.
+                </div>
+
+                <div class="step">
+                    <strong>2. Verify your details:</strong> Ensure your contact information and specializations are accurate and current.
+                </div>
+
+                <div class="step">
+                    <strong>3. Access your dashboard:</strong> Log in to manage your profile, view consultation requests, and update your information.
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <a href="{context['dashboard_url']}" class="button">Access Dashboard</a>
+            <a href="{context['registry_url']}" class="button-link">View Public Profile</a>
+
+            <p class="text" style="margin-top: 32px; font-size: 13px; color: #666666;">
+                If you have questions, contact our registry support team at <a href="mailto:registry@phb.ng" style="color: #000000;">registry@phb.ng</a>
+            </p>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p><strong>Public Health Bureau</strong></p>
+            <p>Professional Registry Division</p>
+            <p>Federal Capital Territory, Abuja, Nigeria</p>
+
+            <div class="footer-divider"></div>
+
+            <p>
+                Application Reference: {context['application_reference']}<br>
+                Email: <a href="mailto:registry@phb.ng">registry@phb.ng</a> |
+                Phone: +234 (0) 800 CALL PHB
+            </p>
+
+            <p style="margin-top: 16px;">
+                <a href="{settings.FRONTEND_URL}/privacy">Privacy Policy</a> |
+                <a href="{settings.FRONTEND_URL}/terms">Terms of Service</a>
+            </p>
+
+            <p style="margin-top: 16px; color: #999999;">
+                © 2025 Public Health Bureau. All rights reserved.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+    try:
+        send_mail(
+            subject=subject,
+            message=plain_message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[application.email],
+            html_message=html_message,
+            fail_silently=False
+        )
+        logger.info(f"Approval email sent to {application.email} for application {application.application_reference}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send approval email: {str(e)}")
+        return False
+
+def send_practice_page_approved_email(practice_page):
+    """
+    Send email notification when a professional practice page is approved.
+    
+    Args:
+        practice_page: ProfessionalPracticePage instance
+    """
+    subject = f"Practice Page Approved - {practice_page.practice_name}"
+    
+    # Build context with approval details
+    context = {
+        'owner_name': practice_page.owner.get_full_name(),
+        'practice_name': practice_page.practice_name,
+        'service_type': practice_page.get_service_type_display(),
+        'license_number': practice_page.linked_registry_entry.phb_license_number,
+        'professional_type': practice_page.linked_registry_entry.get_professional_type_display(),
+        'verification_date': practice_page.verified_date.strftime('%B %d, %Y') if practice_page.verified_date else 'Today',
+        'page_url': f"{settings.FRONTEND_URL}/pages/{practice_page.slug}",
+        'dashboard_url': f"{settings.FRONTEND_URL}/professional/my-practice",
+        'city': practice_page.city,
+        'state': practice_page.state,
+    }
+    
+    # Plain text message
+    plain_message = f"""
+Congratulations {context['owner_name']}!
+
+Your practice page "{context['practice_name']}" has been APPROVED!
+
+PAGE DETAILS:
+Practice Name: {context['practice_name']}
+Service Type: {context['service_type']}
+Location: {context['city']}, {context['state']}
+PHB License: {context['license_number']}
+Professional Type: {context['professional_type']}
+Approved Date: {context['verification_date']}
+
+Your practice page is now live and searchable by patients looking for healthcare services in your area.
+
+NEXT STEPS:
+1. View your public practice page
+2. Share your page link with patients
+3. Keep your information up-to-date
+4. Respond to patient inquiries promptly
+
+Your public page: {context['page_url']}
+Manage your page: {context['dashboard_url']}
+
+Congratulations on your approved practice page!
+
+Best regards,
+PHB Registry Team
+"""
+    
+    # HTML email template - matching the application approval style
+    html_message = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {{ margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333333; background-color: #f4f4f4; }}
+        .container {{ max-width: 600px; margin: 0 auto; background: #ffffff; }}
+
+        /* Simple Header */
+        .header {{
+            padding: 32px 40px 24px;
+            border-bottom: 2px solid #000000;
+        }}
+        .logo {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #000000;
+            margin: 0;
+        }}
+        .subtitle {{
+            font-size: 14px;
+            color: #666666;
+            margin: 4px 0 0 0;
+        }}
+
+        /* Content */
+        .content {{ padding: 40px; }}
+        .title {{
+            font-size: 20px;
+            font-weight: 600;
+            color: #000000;
+            margin: 0 0 24px 0;
+        }}
+        .text {{
+            font-size: 15px;
+            color: #333333;
+            margin: 0 0 16px 0;
+            line-height: 1.5;
+        }}
+
+        /* Practice Page Information Box */
+        .info-box {{
+            background: #f9f9f9;
+            border: 1px solid #e5e5e5;
+            padding: 24px;
+            margin: 24px 0;
+        }}
+        .info-heading {{
+            font-size: 12px;
+            font-weight: 600;
+            color: #666666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 0 0 16px 0;
+        }}
+        .practice-name {{
+            font-size: 18px;
+            font-weight: 700;
+            color: #000000;
+            margin: 0 0 20px 0;
+        }}
+
+        /* Details Table */
+        .details-table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+        .details-table td {{
+            padding: 8px 0;
+            font-size: 14px;
+            border-bottom: 1px solid #f0f0f0;
+        }}
+        .details-table td:first-child {{
+            color: #666666;
+            width: 40%;
+        }}
+        .details-table td:last-child {{
+            color: #000000;
+            font-weight: 500;
+        }}
+        .details-table tr:last-child td {{
+            border-bottom: none;
+        }}
+
+        /* Next Steps */
+        .steps-section {{
+            margin: 32px 0;
+        }}
+        .steps-heading {{
+            font-size: 16px;
+            font-weight: 600;
+            color: #000000;
+            margin: 0 0 16px 0;
+        }}
+        .step {{
+            margin-bottom: 16px;
+            font-size: 14px;
+            line-height: 1.5;
+        }}
+        .step strong {{
+            color: #000000;
+        }}
+
+        /* Button */
+        .button {{
+            display: inline-block;
+            background: #000000;
+            color: #ffffff;
+            text-decoration: none;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 500;
+            margin: 24px 0 8px 0;
+        }}
+        .button-link {{
+            display: inline-block;
+            color: #000000;
+            text-decoration: underline;
+            font-size: 14px;
+            margin: 8px 16px 0 0;
+        }}
+
+        /* Footer */
+        .footer {{
+            padding: 32px 40px;
+            background: #f9f9f9;
+            border-top: 1px solid #e5e5e5;
+            font-size: 12px;
+            color: #666666;
+            line-height: 1.6;
+        }}
+        .footer p {{
+            margin: 0 0 8px 0;
+        }}
+        .footer a {{
+            color: #000000;
+            text-decoration: none;
+        }}
+        .footer-divider {{
+            height: 1px;
+            background: #e5e5e5;
+            margin: 16px 0;
+        }}
+
+        @media only screen and (max-width: 600px) {{
+            .header, .content, .footer {{ padding: 24px 20px; }}
+            .button {{ display: block; text-align: center; }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">PHB</div>
+            <div class="subtitle">Public Health Bureau - Professional Registry</div>
+        </div>
+
+        <!-- Content -->
+        <div class="content">
+            <h1 class="title">Practice Page Approved</h1>
+
+            <p class="text">
+                Dear {context['owner_name']},
+            </p>
+
+            <p class="text">
+                Your professional practice page has been reviewed and approved. Your page is now live and searchable by patients seeking healthcare services.
+            </p>
+
+            <!-- Practice Page Information -->
+            <div class="info-box">
+                <div class="info-heading">Practice Page Details</div>
+                <div class="practice-name">{context['practice_name']}</div>
+
+                <table class="details-table">
+                    <tr>
+                        <td>Page Owner</td>
+                        <td>{context['owner_name']}</td>
+                    </tr>
+                    <tr>
+                        <td>Professional Type</td>
+                        <td>{context['professional_type']}</td>
+                    </tr>
+                    <tr>
+                        <td>PHB License</td>
+                        <td>{context['license_number']}</td>
+                    </tr>
+                    <tr>
+                        <td>Service Type</td>
+                        <td>{context['service_type']}</td>
+                    </tr>
+                    <tr>
+                        <td>Location</td>
+                        <td>{context['city']}, {context['state']}</td>
+                    </tr>
+                    <tr>
+                        <td>Approved Date</td>
+                        <td>{context['verification_date']}</td>
+                    </tr>
+                </table>
+            </div>
+
+            <p class="text">
+                Your practice page is now visible to patients searching for healthcare professionals in your area.
+            </p>
+
+            <!-- Next Steps -->
+            <div class="steps-section">
+                <div class="steps-heading">Next Steps</div>
+
+                <div class="step">
+                    <strong>1. Share your page:</strong> Distribute your public page link to patients and on social media to increase visibility.
+                </div>
+
+                <div class="step">
+                    <strong>2. Keep information current:</strong> Regularly update your opening hours, services, and contact details.
+                </div>
+
+                <div class="step">
+                    <strong>3. Respond to inquiries:</strong> Monitor and respond to patient inquiries promptly to build trust.
+                </div>
+
+                <div class="step">
+                    <strong>4. Build your presence:</strong> Encourage satisfied patients to nominate your practice for prescription services.
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <a href="{context['page_url']}" class="button">View Public Page</a>
+            <a href="{context['dashboard_url']}" class="button-link">Manage Page</a>
+
+            <p class="text" style="margin-top: 32px; font-size: 13px; color: #666666;">
+                If you have questions about your practice page, contact our support team at <a href="mailto:support@phb.ng" style="color: #000000;">support@phb.ng</a>
+            </p>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p><strong>Public Health Bureau</strong></p>
+            <p>Professional Registry Division</p>
+            <p>Federal Capital Territory, Abuja, Nigeria</p>
+
+            <div class="footer-divider"></div>
+
+            <p>
+                Practice Page: {context['practice_name']}<br>
+                Email: <a href="mailto:support@phb.ng">support@phb.ng</a> |
+                Phone: +234 (0) 800 CALL PHB
+            </p>
+
+            <p style="margin-top: 16px;">
+                <a href="{settings.FRONTEND_URL}/privacy">Privacy Policy</a> |
+                <a href="{settings.FRONTEND_URL}/terms">Terms of Service</a>
+            </p>
+
+            <p style="margin-top: 16px; color: #999999;">
+                © 2025 Public Health Bureau. All rights reserved.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+    
+    try:
+        send_mail(
+            subject=subject,
+            message=plain_message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[practice_page.owner.email],
+            html_message=html_message,
+            fail_silently=False
+        )
+        logger.info(f"Practice page approval email sent to {practice_page.owner.email} for page '{practice_page.practice_name}'")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send practice page approval email: {str(e)}")
+        return False

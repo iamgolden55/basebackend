@@ -4,10 +4,10 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .permissions import IsMedicalStaff
 from .models import (
-    Hospital, 
-    GPPractice, 
-    GeneralPractitioner, 
-    CustomUser, 
+    Hospital,
+    GPPractice,
+    GeneralPractitioner,
+    CustomUser,
     MedicalRecord,
     Department,
     Doctor,
@@ -31,7 +31,21 @@ from .models import (
     FertilityTracking,
     HealthGoal,
     DailyHealthLog,
-    HealthScreening
+    HealthScreening,
+    # Pharmacy Models
+    Pharmacy,
+    NominatedPharmacy,
+    PharmacyAccessLog,
+    # Professional Registry Models
+    ProfessionalApplication,
+    ApplicationDocument,
+    PHBProfessionalRegistry,
+    # Professional Practice Page Models
+    ProfessionalPracticePage,
+    PhysicalLocation,
+    VirtualServiceOffering,
+    # Admin Models
+    AdminSignature,
 )
 # from .models.medical.hospital_auth import HospitalAdmin
 
@@ -588,3 +602,595 @@ class HealthScreeningAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         })
     )
+
+# Pharmacy Admin
+@admin.register(Pharmacy)
+class PharmacyAdmin(admin.ModelAdmin):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+    list_display = ['name', 'phb_pharmacy_code', 'city', 'postcode', 'phone', 'electronic_prescriptions_enabled', 'is_active', 'verified']
+    list_filter = ['electronic_prescriptions_enabled', 'is_active', 'verified', 'city', 'state']
+    search_fields = ['name', 'phb_pharmacy_code', 'city', 'postcode', 'phone', 'email']
+    ordering = ['name']
+
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('phb_pharmacy_code', 'name', 'description', 'hospital')
+        }),
+        ('Address', {
+            'fields': ('address_line_1', 'address_line_2', 'city', 'state', 'postcode', 'country')
+        }),
+        ('Contact', {
+            'fields': ('phone', 'email', 'website')
+        }),
+        ('Location', {
+            'fields': ('latitude', 'longitude')
+        }),
+        ('Services', {
+            'fields': ('electronic_prescriptions_enabled', 'opening_hours', 'services_offered')
+        }),
+        ('Status', {
+            'fields': ('is_active', 'verified')
+        })
+    )
+
+# Nominated Pharmacy Admin
+@admin.register(NominatedPharmacy)
+class NominatedPharmacyAdmin(admin.ModelAdmin):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsMedicalStaff]
+    list_display = ['user', 'pharmacy', 'nomination_type', 'is_current', 'nominated_at', 'ended_at']
+    list_filter = ['is_current', 'nomination_type', 'nominated_at']
+    search_fields = ['user__email', 'user__first_name', 'user__last_name', 'user__hpn', 'pharmacy__name', 'pharmacy__phb_pharmacy_code']
+    date_hierarchy = 'nominated_at'
+    ordering = ['-nominated_at']
+
+    fieldsets = (
+        ('Nomination Details', {
+            'fields': ('user', 'pharmacy', 'nomination_type')
+        }),
+        ('Status', {
+            'fields': ('is_current', 'nominated_at', 'ended_at')
+        }),
+        ('Notes', {
+            'fields': ('notes',),
+            'classes': ('collapse',)
+        })
+    )
+
+
+# Pharmacy Access Log Admin (Audit Trail)
+@admin.register(PharmacyAccessLog)
+class PharmacyAccessLogAdmin(admin.ModelAdmin):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsMedicalStaff]
+
+    list_display = [
+        'patient_hpn',
+        'pharmacist_user',
+        'pharmacy',
+        'access_type',
+        'prescription_count',
+        'controlled_substance_count',
+        'access_granted',
+        'patient_verified',
+        'access_time'
+    ]
+
+    list_filter = [
+        'access_granted',
+        'access_type',
+        'verification_method',
+        'patient_verified',
+        'access_time'
+    ]
+
+    search_fields = [
+        'patient_hpn',
+        'pharmacist_user__email',
+        'pharmacist_user__first_name',
+        'pharmacist_user__last_name',
+        'patient_user__email',
+        'ip_address'
+    ]
+
+    date_hierarchy = 'access_time'
+    ordering = ['-access_time']
+
+    readonly_fields = [
+        'access_time',
+        'created_at',
+        'updated_at',
+        'prescriptions_accessed',
+        'ip_address',
+        'user_agent'
+    ]
+
+    fieldsets = (
+        ('Patient Information', {
+            'fields': (
+                'patient_hpn',
+                'patient_user'
+            )
+        }),
+        ('Pharmacy & Pharmacist', {
+            'fields': (
+                'pharmacy',
+                'pharmacist_user'
+            )
+        }),
+        ('Access Details', {
+            'fields': (
+                'access_type',
+                'access_time',
+                'access_granted',
+                'denial_reason'
+            )
+        }),
+        ('Prescriptions Accessed', {
+            'fields': (
+                'prescriptions_accessed',
+                'prescription_count',
+                'controlled_substance_count'
+            )
+        }),
+        ('Patient Verification', {
+            'fields': (
+                'patient_verified',
+                'verification_method'
+            )
+        }),
+        ('Technical Details', {
+            'fields': (
+                'ip_address',
+                'user_agent'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Notes', {
+            'fields': ('notes',),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': (
+                'created_at',
+                'updated_at'
+            ),
+            'classes': ('collapse',)
+        })
+    )
+
+    def has_add_permission(self, request):
+        """Prevent manual creation - logs are auto-generated"""
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        """Prevent deletion for audit compliance"""
+        return False
+
+
+# ======================== PROFESSIONAL REGISTRY ADMIN ========================
+
+@admin.register(ProfessionalApplication)
+class ProfessionalApplicationAdmin(admin.ModelAdmin):
+    """
+    Admin interface for Professional Registry Applications.
+    Includes custom actions to reset stuck applications to draft status.
+    """
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    list_display = [
+        'application_reference',
+        'user_email',
+        'applicant_name',
+        'professional_type',
+        'status',
+        'submitted_date',
+        'document_count',
+        'created_at'
+    ]
+    list_filter = [
+        'status',
+        'professional_type',
+        'specialization',
+        'home_registration_body',
+        'created_at',
+        'submitted_date'
+    ]
+    search_fields = [
+        'application_reference',
+        'user__email',
+        'user__first_name',
+        'user__last_name',
+        'first_name',
+        'last_name',
+        'email',
+        'phone',
+        'home_registration_number',
+        'phb_license_number'
+    ]
+    readonly_fields = [
+        'id',
+        'application_reference',
+        'created_at',
+        'updated_at',
+        'submitted_date',
+        'under_review_date',
+        'decision_date'
+    ]
+    date_hierarchy = 'created_at'
+    ordering = ['-created_at']
+
+    fieldsets = (
+        ('Application Status', {
+            'fields': ('id', 'application_reference', 'status', 'user')
+        }),
+        ('Personal Information', {
+            'fields': ('title', 'first_name', 'middle_name', 'last_name', 'email', 'phone', 'alternate_phone')
+        }),
+        ('Professional Details', {
+            'fields': ('professional_type', 'specialization', 'subspecialization', 'years_of_experience')
+        }),
+        ('Regulatory Information', {
+            'fields': ('home_registration_body', 'home_registration_number', 'home_registration_date')
+        }),
+        ('PHB License', {
+            'fields': ('phb_license_number',),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at', 'submitted_date', 'under_review_date', 'decision_date'),
+            'classes': ('collapse',)
+        })
+    )
+
+    actions = ['reset_to_draft', 'request_additional_documents']
+
+    def user_email(self, obj):
+        """Display user email"""
+        return obj.user.email if obj.user else 'N/A'
+    user_email.short_description = 'User Email'
+
+    def applicant_name(self, obj):
+        """Display applicant full name"""
+        return f"{obj.first_name} {obj.last_name}"
+    applicant_name.short_description = 'Applicant Name'
+
+    def document_count(self, obj):
+        """Display number of documents uploaded"""
+        return obj.documents.count()
+    document_count.short_description = 'Documents'
+
+    @admin.action(description='🔄 Reset selected applications to draft status (allows document uploads)')
+    def reset_to_draft(self, request, queryset):
+        """
+        Reset applications to draft status to allow document uploads.
+        This fixes applications that were auto-submitted before documents were uploaded.
+        """
+        # Only reset non-draft applications
+        eligible = queryset.exclude(status='draft')
+        count = eligible.update(
+            status='draft',
+            submitted_date=None,
+            under_review_date=None
+        )
+
+        if count > 0:
+            self.message_user(
+                request,
+                f'✅ Successfully reset {count} application(s) to draft status. Users can now upload documents.',
+                level='SUCCESS'
+            )
+        else:
+            self.message_user(
+                request,
+                '⚠️ No applications were reset. Selected applications may already be in draft status.',
+                level='WARNING'
+            )
+
+    @admin.action(description='📎 Request additional documents from applicants')
+    def request_additional_documents(self, request, queryset):
+        """
+        Change status to 'documents_requested' to allow additional document uploads.
+        """
+        # Only update submitted or under_review applications
+        eligible = queryset.filter(status__in=['submitted', 'under_review'])
+        count = eligible.update(status='documents_requested')
+
+        if count > 0:
+            self.message_user(
+                request,
+                f'✅ Successfully requested additional documents for {count} application(s). Users can now upload more documents.',
+                level='SUCCESS'
+            )
+        else:
+            self.message_user(
+                request,
+                '⚠️ No applications updated. Only submitted or under_review applications can have documents requested.',
+                level='WARNING'
+            )
+
+
+@admin.register(ApplicationDocument)
+class ApplicationDocumentAdmin(admin.ModelAdmin):
+    """Admin interface for application documents."""
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    list_display = [
+        'get_application_ref',
+        'document_type',
+        'original_filename',
+        'verification_status',
+        'created_at',
+        'verified_date'
+    ]
+    list_filter = [
+        'document_type',
+        'verification_status',
+        'created_at',
+        'verified_date'
+    ]
+    search_fields = [
+        'application__application_reference',
+        'application__user__email',
+        'original_filename',
+        'document_type'
+    ]
+    readonly_fields = [
+        'id',
+        'created_at',
+        'updated_at',
+        'verified_date',
+        'verified_by'
+    ]
+    date_hierarchy = 'created_at'
+    ordering = ['-created_at']
+
+    def get_application_ref(self, obj):
+        """Display application reference"""
+        return obj.application.application_reference
+    get_application_ref.short_description = 'Application'
+
+
+@admin.register(PHBProfessionalRegistry)
+class PHBProfessionalRegistryAdmin(admin.ModelAdmin):
+    """Admin interface for approved professionals in the registry."""
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    list_display = [
+        'phb_license_number',
+        'get_full_name',
+        'professional_type',
+        'specialization',
+        'license_status',
+        'license_expiry_date',
+        'is_searchable'
+    ]
+    list_filter = [
+        'professional_type',
+        'license_status',
+        'specialization',
+        'is_searchable',
+        'license_issue_date'
+    ]
+    search_fields = [
+        'phb_license_number',
+        'first_name',
+        'last_name',
+        'home_registration_number'
+    ]
+    readonly_fields = [
+        'id',
+        'application',
+        'license_issue_date',
+        'created_at',
+        'updated_at'
+    ]
+    date_hierarchy = 'license_issue_date'
+    ordering = ['-license_issue_date']
+
+    def get_full_name(self, obj):
+        """Display professional's full name"""
+        return f"{obj.first_name} {obj.last_name}"
+    get_full_name.short_description = 'Name'
+
+
+# ============================================================================
+# Professional Practice Pages
+# ============================================================================
+
+@admin.register(ProfessionalPracticePage)
+class ProfessionalPracticePageAdmin(admin.ModelAdmin):
+    """Admin interface for professional practice pages."""
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    list_display = [
+        'practice_name',
+        'get_owner_name',
+        'get_professional_type',
+        'service_type',
+        'city',
+        'state',
+        'is_published',
+        'verification_status',
+        'view_count',
+        'nomination_count',
+        'created_at'
+    ]
+    list_filter = [
+        'service_type',
+        'is_published',
+        'verification_status',
+        'state',
+        'created_at'
+    ]
+    search_fields = [
+        'practice_name',
+        'slug',
+        'owner__email',
+        'owner__first_name',
+        'owner__last_name',
+        'city',
+        'state'
+    ]
+    readonly_fields = [
+        'id',
+        'owner',
+        'linked_registry_entry',
+        'slug',
+        'view_count',
+        'nomination_count',
+        'verified_by',
+        'verified_date',
+        'created_at',
+        'updated_at'
+    ]
+    date_hierarchy = 'created_at'
+    ordering = ['-created_at']
+
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('id', 'owner', 'linked_registry_entry', 'practice_name', 'slug', 'tagline', 'about')
+        }),
+        ('Service Type', {
+            'fields': ('service_type',)
+        }),
+        ('Physical Location', {
+            'fields': ('address_line_1', 'address_line_2', 'city', 'state', 'postcode', 'country', 'latitude', 'longitude')
+        }),
+        ('Contact Information', {
+            'fields': ('phone', 'email', 'website', 'whatsapp_number')
+        }),
+        ('Opening Hours', {
+            'fields': ('opening_hours',)
+        }),
+        ('Virtual Services', {
+            'fields': ('virtual_consultation_hours', 'online_booking_url', 'video_platform')
+        }),
+        ('Services & Details', {
+            'fields': ('services_offered', 'payment_methods', 'additional_certifications', 'languages_spoken')
+        }),
+        ('Publication & Verification', {
+            'fields': ('is_published', 'verification_status', 'verification_notes', 'verified_by', 'verified_date')
+        }),
+        ('Statistics', {
+            'fields': ('view_count', 'nomination_count')
+        }),
+        ('SEO', {
+            'fields': ('meta_keywords',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at')
+        }),
+    )
+
+    def get_owner_name(self, obj):
+        """Display owner's full name"""
+        return obj.owner.get_full_name()
+    get_owner_name.short_description = 'Owner'
+
+    def get_professional_type(self, obj):
+        """Display professional type"""
+        return obj.linked_registry_entry.professional_type
+    get_professional_type.short_description = 'Type'
+
+
+@admin.register(PhysicalLocation)
+class PhysicalLocationAdmin(admin.ModelAdmin):
+    """Admin interface for physical locations."""
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    list_display = [
+        'name',
+        'get_practice_page',
+        'city',
+        'state',
+        'is_primary',
+        'created_at'
+    ]
+    list_filter = [
+        'is_primary',
+        'state',
+        'created_at'
+    ]
+    search_fields = [
+        'name',
+        'practice_page__practice_name',
+        'city',
+        'state'
+    ]
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    ordering = ['-is_primary', 'name']
+
+    def get_practice_page(self, obj):
+        """Display practice page name"""
+        return obj.practice_page.practice_name
+    get_practice_page.short_description = 'Practice Page'
+
+
+@admin.register(VirtualServiceOffering)
+class VirtualServiceOfferingAdmin(admin.ModelAdmin):
+    """Admin interface for virtual service offerings."""
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    list_display = [
+        'service_name',
+        'get_practice_page',
+        'duration_minutes',
+        'price',
+        'is_active',
+        'created_at'
+    ]
+    list_filter = [
+        'is_active',
+        'created_at'
+    ]
+    search_fields = [
+        'service_name',
+        'practice_page__practice_name',
+        'description'
+    ]
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    ordering = ['service_name']
+
+    def get_practice_page(self, obj):
+        """Display practice page name"""
+        return obj.practice_page.practice_name
+    get_practice_page.short_description = 'Practice Page'
+
+@admin.register(AdminSignature)
+class AdminSignatureAdmin(admin.ModelAdmin):
+    """Admin interface for managing signature for hospital approval certificates."""
+    list_display = ['name', 'is_active', 'signature_preview', 'created_at', 'updated_at']
+    list_filter = ['is_active', 'created_at']
+    search_fields = ['name']
+    readonly_fields = ['created_at', 'updated_at', 'signature_preview']
+    fields = ['name', 'signature_image', 'signature_preview', 'is_active', 'created_at', 'updated_at']
+    
+    def signature_preview(self, obj):
+        """Display a preview of the signature image."""
+        if obj.signature_image:
+            from django.utils.html import format_html
+            return format_html(
+                '<img src="{}" style="max-height: 100px; max-width: 300px;" />',
+                obj.signature_image.url
+            )
+        return "No signature uploaded"
+    signature_preview.short_description = 'Signature Preview'
+    
+    def has_add_permission(self, request):
+        """Allow adding if no active signature exists, or allow adding inactive ones."""
+        return True
+    
+    def save_model(self, request, obj, form, change):
+        """Override save to ensure only one active signature."""
+        if obj.is_active:
+            # Deactivate all other signatures
+            AdminSignature.objects.filter(is_active=True).exclude(pk=obj.pk).update(is_active=False)
+        super().save_model(request, obj, form, change)

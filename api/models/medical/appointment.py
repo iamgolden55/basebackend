@@ -198,6 +198,7 @@ class Appointment(TimestampedModel):
     # Status Timestamps
     cancelled_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp when consultation was started")
 
     class Meta:
         ordering = ['appointment_date']  # Show upcoming appointments first (soonest first)
@@ -243,6 +244,12 @@ class Appointment(TimestampedModel):
     def _validate_appointment_date(self):
         """Validate appointment date is not in the past"""
         if self.appointment_date:
+            # Skip validation for existing appointments being updated (e.g., when doctor proposes new time)
+            # Only validate for new appointments
+            if self.pk and self.status in ['confirmed', 'scheduled', 'in_progress']:
+                # Allow updating existing confirmed/scheduled appointments with new times
+                return
+                
             # Ensure timezone-aware dates and remove microseconds
             now = timezone.now().replace(microsecond=0)
             appointment_date = self.appointment_date.replace(microsecond=0)
@@ -272,8 +279,13 @@ class Appointment(TimestampedModel):
 
     def _validate_duplicate_appointments(self):
         """Check for existing appointments with the same specialty on the same day"""
+        # Skip validation for existing confirmed appointments being updated (e.g., when doctor proposes new time)
+        if self.pk and self.status in ['confirmed', 'scheduled', 'in_progress']:
+            # Allow updating existing appointments - doctor has already explicitly chosen this time
+            return
+
         logger.debug(f"Checking duplicates for patient={self.patient.id}, date={self.appointment_date.date()}, dept={self.department.id}")
-        
+
         same_specialty_appointments = Appointment.objects.filter(
             patient=self.patient,
             appointment_date__date=self.appointment_date.date(),
@@ -282,9 +294,9 @@ class Appointment(TimestampedModel):
         ).exclude(
             status__in=['cancelled', 'completed', 'no_show']
         )
-        
+
         logger.debug(f"Query before exclusion count: {same_specialty_appointments.count()}")
-        
+
         # Exclude current appointment if it's being updated
         if self.pk:
             logger.debug(f"Excluding current appointment pk={self.pk}")
@@ -304,6 +316,11 @@ class Appointment(TimestampedModel):
 
     def _validate_doctor_availability(self):
         """Validate doctor availability and schedule capacity"""
+        # Skip validation for existing confirmed appointments being updated (e.g., when doctor proposes new time)
+        if self.pk and self.status in ['confirmed', 'scheduled', 'in_progress']:
+            # Allow updating existing appointments - doctor has already explicitly chosen this time
+            return
+            
         if not self.doctor.is_available_at(self.appointment_date, is_emergency=False, current_appointment=self):
             raise ValidationError({
                 'appointment_date': ["Doctor is not available at this time"]
@@ -317,6 +334,9 @@ class Appointment(TimestampedModel):
     def _validate_status_transitions(self):
         """Validate status transitions"""
         old_instance = Appointment.objects.get(pk=self.pk)
+        # Allow same-status updates (not really a transition, just updating other fields)
+        if old_instance.status == self.status:
+            return
         if not self._is_valid_status_transition(old_instance.status, self.status):
             raise ValidationError({
                 'status': [f"Invalid status transition from {old_instance.status} to {self.status}"]
@@ -335,23 +355,27 @@ class Appointment(TimestampedModel):
         return registrations.filter(hospital=self.hospital).exists()
 
     def save(self, *args, **kwargs):
+        # Check if validation should be bypassed
+        bypass_validation = kwargs.pop('bypass_validation', False)
+
         # Generate appointment ID if not provided
         self._generate_appointment_id_if_needed()
-        
+
         # Get the old status if this is an existing appointment
         old_status = self._get_old_status_if_updating()
-        
+
         # Validate and update status changes
         self._validate_and_update_status_changes(old_status)
-        
-        # Always run full validation to ensure data integrity
-        self.full_clean()
-        
+
+        # Run full validation unless explicitly bypassed
+        if not bypass_validation:
+            self.full_clean()
+
         # Check if this is a new appointment
         is_new_appointment = self.pk is None
-        
+
         super().save(*args, **kwargs)
-        
+
         # Handle notifications based on appointment status
         self._send_appointment_notifications(is_new_appointment, old_status)
 
@@ -517,11 +541,12 @@ class Appointment(TimestampedModel):
         """Start the consultation - move to in_progress"""
         if self.status != 'confirmed':
             raise ValidationError("Only confirmed appointments can be started")
-            
+
         if self.doctor != doctor:
             raise ValidationError("Only the assigned doctor can start the consultation")
-            
+
         self.status = 'in_progress'
+        self.started_at = timezone.now()
         self.save()
 
     def complete_consultation(self, doctor):
@@ -768,6 +793,29 @@ class Appointment(TimestampedModel):
             return (timezone.now() - self.last_reminder_sent).days >= 1
             
         return True
+
+    @property
+    def is_past_scheduled_time(self):
+        """Check if appointment is past its scheduled time"""
+        return timezone.now() > self.appointment_date
+
+    @property
+    def is_flagged_pending(self):
+        """
+        Check if appointment should be flagged as pending overdue.
+        Returns True if:
+        - Status is still 'pending' (no doctor accepted)
+        - Appointment time has passed
+        """
+        return self.status == 'pending' and self.is_past_scheduled_time
+
+    @property
+    def minutes_past_scheduled_time(self):
+        """Calculate how many minutes past the scheduled time"""
+        if not self.is_past_scheduled_time:
+            return 0
+        delta = timezone.now() - self.appointment_date
+        return int(delta.total_seconds() / 60)
 
     def get_appointment_summary(self):
         """Get summary of appointment details"""

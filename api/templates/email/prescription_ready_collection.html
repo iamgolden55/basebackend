@@ -1,0 +1,447 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<div class="email-container">
+    <div class="header">
+        <h1>Prescription Ready for Collection 💊</h1>
+    </div>
+
+    <div class="content">
+        <p>Hello {{ patient_name }},</p>
+
+        <p>Good news! Your prescription is now ready to collect from your pharmacy.</p>
+
+        <div class="ready-notice">
+            <h2>✅ Ready for Pickup</h2>
+            <p class="reference">Reference: <strong>{{ request_reference }}</strong></p>
+        </div>
+
+        <div class="collection-details">
+            <h3>Collection Information 🏥</h3>
+            <p class="pharmacy-name">{{ pharmacy_name }}</p>
+            <p class="pharmacy-address">{{ pharmacy_address }}</p>
+            {% if pharmacy_phone %}
+            <p class="pharmacy-phone">📞 {{ pharmacy_phone }}</p>
+            {% endif %}
+
+            <div class="opening-hours">
+                <h4>Opening Hours:</h4>
+                {% if pharmacy_hours %}
+                <p>{{ pharmacy_hours }}</p>
+                {% else %}
+                <p>Please contact the pharmacy for opening hours</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="medications-ready">
+            <h3>Medications Ready ({{ medication_count }})</h3>
+            <table class="medication-table">
+                <thead>
+                    <tr>
+                        <th>Medication</th>
+                        <th>Quantity</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for medication in medications %}
+                    <tr>
+                        <td>
+                            <strong>{{ medication.name }}</strong><br>
+                            <small>{{ medication.strength }} - {{ medication.form }}</small>
+                        </td>
+                        <td>{{ medication.quantity }}</td>
+                        <td>
+                            {% if medication.refills_allowed > 0 %}
+                            <span class="refill-badge">{{ medication.refills_allowed }} refill(s)</span>
+                            {% else %}
+                            -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="important-info">
+            <h3>Before You Collect 📋</h3>
+            <ul>
+                <li><strong>Bring Valid ID:</strong> Photo identification required (driver's license, passport, etc.)</li>
+                <li><strong>Prescription Fee:</strong> {% if requires_payment %}You may need to pay the prescription fee (£9.90 per item or free if exempt){% else %}No payment required if you are exempt{% endif %}</li>
+                <li><strong>Collection Window:</strong> Please collect by <strong>{{ pickup_deadline }}</strong></li>
+                <li><strong>Someone Else Collecting?:</strong> They'll need your written consent and their own ID</li>
+            </ul>
+        </div>
+
+        <div class="payment-info">
+            <h3>Prescription Charges 💳</h3>
+            {% if is_exempt %}
+            <p class="exempt-notice">✅ You are exempt from prescription charges</p>
+            {% else %}
+            <p>Standard NHS prescription charge: <strong>£9.90 per item</strong></p>
+            <p><strong>You may be exempt if you:</strong></p>
+            <ul>
+                <li>Are aged 60 or over</li>
+                <li>Are under 16, or under 19 in full-time education</li>
+                <li>Are pregnant or have had a baby in the previous 12 months</li>
+                <li>Have certain medical conditions (e.g., diabetes, epilepsy)</li>
+                <li>Receive certain benefits (Income Support, Universal Credit, etc.)</li>
+            </ul>
+            <p><em>Please bring proof of exemption if applicable</em></p>
+            {% endif %}
+        </div>
+
+        <div class="pharmacy-instructions">
+            <h3>What to Expect at the Pharmacy 👨‍⚕️</h3>
+            <ol>
+                <li>Present your ID and prescription reference number</li>
+                <li>The pharmacist will verify your details</li>
+                <li>Pay any applicable fees (if not exempt)</li>
+                <li>Receive your medication with instructions</li>
+                <li>Ask the pharmacist any questions about your medication</li>
+            </ol>
+        </div>
+
+        <div class="medication-guidance">
+            <h3>Taking Your Medication Safely 💊</h3>
+            <ul>
+                <li>Read the patient information leaflet carefully</li>
+                <li>Follow the dosage instructions exactly as prescribed</li>
+                <li>Ask the pharmacist if you're unsure about anything</li>
+                <li>Store medications as instructed (some need refrigeration)</li>
+                <li>Keep all medications out of reach of children</li>
+                <li>Complete the full course (for antibiotics, etc.)</li>
+                <li>Report any side effects to your GP or pharmacist</li>
+            </ul>
+        </div>
+
+        {% if has_refills %}
+        <div class="refill-reminder">
+            <h3>Repeat Prescriptions 🔄</h3>
+            <p>You have repeat prescriptions authorized for the following:</p>
+            <ul>
+                {% for medication in medications %}
+                {% if medication.refills_allowed > 0 %}
+                <li><strong>{{ medication.name }}</strong> - {{ medication.refills_allowed }} refill(s) remaining</li>
+                {% endif %}
+                {% endfor %}
+            </ul>
+            <p>You can request refills through your PHB account when you're running low (allow 7-10 days for processing).</p>
+        </div>
+        {% endif %}
+
+        <div class="contact-pharmacy">
+            <h3>Questions? 🤔</h3>
+            <p>If you have any questions about:</p>
+            <ul>
+                <li><strong>Your prescription:</strong> Contact the pharmacy directly</li>
+                <li><strong>Medical concerns:</strong> Contact your GP practice</li>
+                <li><strong>Collection delays:</strong> The pharmacy can advise on availability</li>
+            </ul>
+            {% if pharmacy_phone %}
+            <p class="phone-highlight">Pharmacy: <strong>{{ pharmacy_phone }}</strong></p>
+            {% endif %}
+        </div>
+
+        <div class="deadline-reminder">
+            <h3>⏰ Important Deadline</h3>
+            <p>Please collect your prescription by:</p>
+            <p class="deadline-date">{{ pickup_deadline }}</p>
+            <p class="warning-text">After this date, uncollected prescriptions may be returned to stock and you'll need to request a new prescription.</p>
+        </div>
+
+        <div class="footer-note">
+            <p>If you cannot collect your prescription by the deadline, please contact the pharmacy to make alternative arrangements.</p>
+            <p>Thank you for using PHB Healthcare! 🩺</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .email-container {
+        max-width: 600px;
+        margin: 0 auto;
+        font-family: Arial, sans-serif;
+    }
+
+    .header {
+        background-color: #673ab7;
+        color: white;
+        padding: 20px;
+        text-align: center;
+        border-radius: 5px 5px 0 0;
+    }
+
+    .header h1 {
+        color: white;
+        margin: 0;
+    }
+
+    .content {
+        padding: 20px;
+        background-color: #ffffff;
+        border-radius: 0 0 5px 5px;
+    }
+
+    .ready-notice {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 10px;
+        text-align: center;
+        margin: 20px 0;
+    }
+
+    .ready-notice h2 {
+        color: white;
+        margin: 0 0 10px 0;
+        font-size: 28px;
+    }
+
+    .reference {
+        font-size: 18px;
+        margin: 10px 0 0 0;
+    }
+
+    .collection-details {
+        background-color: #f3e5f5;
+        padding: 20px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #673ab7;
+    }
+
+    .collection-details h3 {
+        margin-top: 0;
+        color: #4a148c;
+    }
+
+    .pharmacy-name {
+        font-size: 20px;
+        font-weight: bold;
+        color: #6a1b9a;
+        margin: 10px 0;
+    }
+
+    .pharmacy-address {
+        color: #424242;
+        margin: 5px 0;
+    }
+
+    .pharmacy-phone {
+        color: #424242;
+        font-weight: bold;
+        margin: 10px 0;
+    }
+
+    .opening-hours {
+        background-color: white;
+        padding: 15px;
+        border-radius: 5px;
+        margin-top: 15px;
+    }
+
+    .opening-hours h4 {
+        margin-top: 0;
+        color: #6a1b9a;
+    }
+
+    .medications-ready {
+        background-color: #e8f5e9;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .medications-ready h3 {
+        margin-top: 0;
+        color: #2e7d32;
+    }
+
+    .medication-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+        background-color: white;
+    }
+
+    .medication-table th {
+        background-color: #4caf50;
+        color: white;
+        padding: 10px;
+        text-align: left;
+        font-weight: bold;
+    }
+
+    .medication-table td {
+        padding: 10px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+
+    .refill-badge {
+        background-color: #2196f3;
+        color: white;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: bold;
+    }
+
+    .important-info {
+        background-color: #fff3e0;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #ff9800;
+    }
+
+    .important-info h3 {
+        margin-top: 0;
+        color: #e65100;
+    }
+
+    .important-info ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .payment-info {
+        background-color: #e1f5fe;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .payment-info h3 {
+        margin-top: 0;
+        color: #01579b;
+    }
+
+    .payment-info ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .exempt-notice {
+        background-color: #c8e6c9;
+        padding: 10px;
+        border-radius: 5px;
+        font-weight: bold;
+        color: #2e7d32;
+    }
+
+    .pharmacy-instructions {
+        background-color: #f5f5f5;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .pharmacy-instructions h3 {
+        margin-top: 0;
+        color: #424242;
+    }
+
+    .pharmacy-instructions ol {
+        margin: 10px 0;
+        padding-left: 25px;
+    }
+
+    .medication-guidance {
+        background-color: #e8f5e9;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .medication-guidance h3 {
+        margin-top: 0;
+        color: #2e7d32;
+    }
+
+    .medication-guidance ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .refill-reminder {
+        background-color: #f3e5f5;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .refill-reminder h3 {
+        margin-top: 0;
+        color: #6a1b9a;
+    }
+
+    .refill-reminder ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .contact-pharmacy {
+        background-color: #fff9c4;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .contact-pharmacy h3 {
+        margin-top: 0;
+        color: #f57f17;
+    }
+
+    .contact-pharmacy ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .phone-highlight {
+        background-color: #fff59d;
+        padding: 10px;
+        border-radius: 5px;
+        text-align: center;
+        margin-top: 10px;
+        font-size: 16px;
+    }
+
+    .deadline-reminder {
+        background-color: #ffebee;
+        padding: 20px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #f44336;
+        text-align: center;
+    }
+
+    .deadline-reminder h3 {
+        margin-top: 0;
+        color: #c62828;
+    }
+
+    .deadline-date {
+        font-size: 24px;
+        font-weight: bold;
+        color: #d32f2f;
+        margin: 15px 0;
+    }
+
+    .warning-text {
+        color: #c62828;
+        font-size: 14px;
+        margin-top: 10px;
+    }
+
+    .footer-note {
+        border-top: 1px solid #eee;
+        margin-top: 20px;
+        padding-top: 20px;
+        color: #666;
+        text-align: center;
+    }
+</style>
+{% endblock %}

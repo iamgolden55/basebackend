@@ -26,7 +26,8 @@ except KeyError:
 # JWT settings
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'api.auth.JWTCookieAuthentication',  # Checks cookies first, then headers
+        'rest_framework_simplejwt.authentication.JWTAuthentication',  # Fallback for backwards compatibility
     )
 }
 
@@ -43,16 +44,27 @@ DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1,basebackend-88c8c04dd3ab.herokuapp.com').split(',')
 
+# JWT Cookie Configuration - httpOnly cookie settings for enhanced security
+JWT_AUTH_COOKIE = 'access_token'  # Cookie name for access token
+JWT_AUTH_REFRESH_COOKIE = 'refresh_token'  # Cookie name for refresh token
+JWT_AUTH_SAMESITE = 'Lax'  # Lax allows cookies on navigation, Strict blocks all cross-site
+JWT_AUTH_SECURE = not DEBUG  # Only send cookies over HTTPS in production
+JWT_AUTH_HTTPONLY = True  # Prevent JavaScript access to cookies (XSS protection)
+JWT_AUTH_COOKIE_MAX_AGE = 60 * 30  # 30 minutes (matches ACCESS_TOKEN_LIFETIME)
+JWT_AUTH_REFRESH_COOKIE_MAX_AGE = 60 * 60 * 24  # 1 day (matches REFRESH_TOKEN_LIFETIME)
+
 
 # Application definition
 
 INSTALLED_APPS = [
+    "daphne",  # Add Daphne for ASGI/WebSocket support
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "channels",  # Add Channels for WebSocket support
     "api",
     "rest_framework",
     "corsheaders",
@@ -67,6 +79,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "api.middleware.auth_debug.AuthDebugMiddleware",  # Debug authentication
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "api.middleware.payment_security.PaymentSecurityMiddleware",
@@ -125,6 +138,14 @@ EMAIL_PORT = os.environ.get('EMAIL_PORT')
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@phb.com')
+
+# Contact Email Addresses (can be changed in .env without server restart when used in templates)
+SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL', 'support@phb.ng')
+REGISTRY_EMAIL = os.environ.get('REGISTRY_EMAIL', 'registry@phb.ng')
+PHB_PHONE = os.environ.get('PHB_PHONE', '+234 (0) 800 CALL PHB')
+
+# Frontend URL for email links
+FRONTEND_URL = os.environ.get('NEXTJS_URL', 'http://localhost:5173').rstrip('/')
 
 APPEND_SLASH = False
 
@@ -228,6 +249,8 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:3001",  # React admin dashboard
+    "http://127.0.0.1:3001",  # React admin dashboard
     "http://localhost:5173",  # Add Vite frontend port
     "http://127.0.0.1:5173",  # Add Vite frontend port
     "https://localhost:5173",  # HTTPS frontend port
@@ -317,3 +340,87 @@ TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER')
 TWILIO_WHATSAPP_NUMBER = os.environ.get('TWILIO_WHATSAPP_NUMBER')
+
+# ===============================================
+# Django Channels Configuration for WebSocket Support
+# ===============================================
+
+# ASGI Configuration for WebSocket support
+ASGI_APPLICATION = 'server.asgi.application'
+
+# Channel Layer Configuration for real-time messaging
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/0')],
+            'capacity': 1500,  # Maximum number of messages in queue per channel
+            'expiry': 60,  # TTL for messages (60 seconds)
+            'symmetric_encryption_keys': [os.environ.get('CHANNEL_ENCRYPTION_KEY', 'dev-key-change-in-production')],
+        },
+    },
+}
+
+# ===============================================
+# WhatsApp-Style Messaging Configuration
+# ===============================================
+
+# Auto-scaling storage configuration
+MESSAGE_STORAGE_STRATEGY = os.environ.get('MESSAGE_STORAGE_STRATEGY', 'auto')
+AUTO_SCALE_HYBRID_THRESHOLD = int(os.environ.get('AUTO_SCALE_HYBRID_THRESHOLD', '5000000'))  # 5M messages
+AUTO_SCALE_FIREBASE_THRESHOLD = int(os.environ.get('AUTO_SCALE_FIREBASE_THRESHOLD', '50000000'))  # 50M messages
+
+# Performance thresholds that trigger scaling
+AUTO_SCALE_MAX_RESPONSE_TIME = int(os.environ.get('AUTO_SCALE_MAX_RESPONSE_TIME', '500'))  # 500ms
+AUTO_SCALE_MAX_DB_SIZE = int(os.environ.get('AUTO_SCALE_MAX_DB_SIZE', '100'))  # 100GB
+AUTO_SCALE_MAX_CONCURRENT_USERS = int(os.environ.get('AUTO_SCALE_MAX_CONCURRENT_USERS', '1000'))
+AUTO_SCALE_MAX_MESSAGE_RATE = int(os.environ.get('AUTO_SCALE_MAX_MESSAGE_RATE', '10000'))  # Per hour
+
+# Message encryption (REQUIRED for HIPAA compliance)
+MESSAGE_ENCRYPTION_KEY = os.environ.get('MESSAGE_ENCRYPTION_KEY', 'QME1DW6ZZYBZvmzhKQ9c2XHiryHSscw0vocaENbOYkA=')
+
+# Hybrid strategy settings
+MESSAGE_LOCAL_RETENTION_DAYS = int(os.environ.get('MESSAGE_LOCAL_RETENTION_DAYS', '30'))
+
+# Firebase configuration (for cloud scaling)
+FIREBASE_PROJECT_ID = os.environ.get('FIREBASE_PROJECT_ID')
+FIREBASE_SERVICE_ACCOUNT_KEY = os.environ.get('FIREBASE_SERVICE_ACCOUNT_KEY')
+
+# HIPAA compliance settings
+MESSAGE_AUDIT_ENABLED = True
+MESSAGE_AUDIT_RETENTION_YEARS = 7  # HIPAA requirement
+MESSAGE_AUDIT_HIGH_RISK_ALERT = True
+MESSAGE_DEFAULT_RETENTION_DAYS = 2555  # 7 years
+MESSAGE_AUTO_DELETE_ENABLED = False
+MESSAGE_BACKUP_ENABLED = True
+MESSAGE_VIRUS_SCAN_ENABLED = True
+MESSAGE_WATERMARK_ENABLED = True
+MESSAGE_ACCESS_LOGGING = True
+
+# WebSocket Authentication
+WEBSOCKET_AUTH_TIMEOUT = 30  # Seconds to authenticate WebSocket connection
+WEBSOCKET_HEARTBEAT_INTERVAL = 30  # Seconds between heartbeat messages
+WEBSOCKET_MAX_MESSAGE_SIZE = 1024 * 1024  # 1MB max message size
+
+# Real-time features
+TYPING_INDICATOR_TIMEOUT = 10  # Seconds after which typing indicator expires
+PRESENCE_UPDATE_INTERVAL = 60  # Seconds between presence updates
+MESSAGE_DELIVERY_TIMEOUT = 30  # Seconds to wait for message delivery confirmation
+
+# ============= STREAM CHAT CONFIGURATION =============
+# Stream Chat API credentials (get from https://getstream.io/dashboard/)
+STREAM_API_KEY = os.getenv('STREAM_API_KEY', 'your-stream-api-key-here')
+STREAM_API_SECRET = os.getenv('STREAM_API_SECRET', 'your-stream-api-secret-here')
+
+# Stream Chat settings
+STREAM_CHAT_ENABLED = True
+STREAM_TOKEN_EXPIRY_HOURS = 24  # Token validity in hours
+STREAM_MAX_CHANNEL_MEMBERS = 100  # Maximum members per channel
+STREAM_MESSAGE_RETENTION_DAYS = 90  # Message retention for compliance
+STREAM_FILE_UPLOAD_MAX_SIZE = 10 * 1024 * 1024  # 10MB max file size
+STREAM_ALLOWED_FILE_TYPES = [
+    'image/jpeg', 'image/png', 'image/gif',
+    'application/pdf', 'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain'
+]

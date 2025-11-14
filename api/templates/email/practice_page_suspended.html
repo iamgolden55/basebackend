@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333333; background-color: #f4f4f4; }
+        .container { max-width: 600px; margin: 0 auto; background: #ffffff; }
+
+        /* Header */
+        .header {
+            padding: 32px 40px 24px;
+            border-bottom: 2px solid #000000;
+        }
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+            color: #000000;
+            margin: 0;
+        }
+        .subtitle {
+            font-size: 14px;
+            color: #666666;
+            margin: 4px 0 0 0;
+        }
+
+        /* Alert Banner - Red for suspension */
+        .alert-banner {
+            background: #fee;
+            border-left: 4px solid #dc3545;
+            padding: 20px 40px;
+            margin: 0;
+        }
+        .alert-banner h2 {
+            margin: 0 0 8px 0;
+            font-size: 18px;
+            color: #721c24;
+        }
+        .alert-banner p {
+            margin: 0;
+            font-size: 14px;
+            color: #721c24;
+        }
+
+        /* Content */
+        .content { padding: 40px; }
+        .title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #000000;
+            margin: 0 0 24px 0;
+        }
+        .text {
+            font-size: 15px;
+            color: #333333;
+            margin: 0 0 16px 0;
+            line-height: 1.5;
+        }
+
+        /* Info Box */
+        .info-box {
+            background: #f9f9f9;
+            border: 1px solid #e5e5e5;
+            padding: 24px;
+            margin: 24px 0;
+        }
+        .info-heading {
+            font-size: 12px;
+            font-weight: 600;
+            color: #666666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin: 0 0 16px 0;
+        }
+        .practice-name {
+            font-size: 18px;
+            font-weight: 700;
+            color: #000000;
+            margin: 0 0 20px 0;
+        }
+
+        /* Danger Box - Red for suspension */
+        .danger-box {
+            background: #fee;
+            border: 1px solid #dc3545;
+            padding: 24px;
+            margin: 24px 0;
+        }
+        .danger-heading {
+            font-size: 16px;
+            font-weight: 600;
+            color: #721c24;
+            margin: 0 0 12px 0;
+        }
+        .danger-text {
+            font-size: 14px;
+            color: #721c24;
+            margin: 0 0 8px 0;
+        }
+
+        /* Requirements List */
+        .requirements-section {
+            margin: 32px 0;
+        }
+        .requirements-heading {
+            font-size: 16px;
+            font-weight: 600;
+            color: #000000;
+            margin: 0 0 16px 0;
+        }
+        .requirement {
+            margin-bottom: 16px;
+            font-size: 14px;
+            line-height: 1.5;
+            padding-left: 20px;
+            position: relative;
+        }
+        .requirement:before {
+            content: "•";
+            position: absolute;
+            left: 0;
+            color: #dc3545;
+            font-weight: bold;
+            font-size: 18px;
+        }
+
+        /* Button */
+        .button {
+            display: inline-block;
+            background: #000000;
+            color: #ffffff;
+            text-decoration: none;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 500;
+            margin: 24px 0 8px 0;
+        }
+
+        /* Footer */
+        .footer {
+            padding: 32px 40px;
+            background: #f9f9f9;
+            border-top: 1px solid #e5e5e5;
+            font-size: 12px;
+            color: #666666;
+            line-height: 1.6;
+        }
+        .footer p {
+            margin: 0 0 8px 0;
+        }
+        .footer a {
+            color: #000000;
+            text-decoration: none;
+        }
+        .footer-divider {
+            height: 1px;
+            background: #e5e5e5;
+            margin: 16px 0;
+        }
+
+        @media only screen and (max-width: 600px) {
+            .header, .content, .footer, .alert-banner { padding: 24px 20px; }
+            .button { display: block; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo">PHB</div>
+            <div class="subtitle">Public Health Bureau - Professional Registry</div>
+        </div>
+
+        <!-- Alert Banner - Red for suspension -->
+        <div class="alert-banner">
+            <h2>🚫 Practice Page Suspended</h2>
+            <p>Your practice page has been removed from public view</p>
+        </div>
+
+        <!-- Content -->
+        <div class="content">
+            <p class="text">
+                Dear {{ owner_name }},
+            </p>
+
+            <p class="text">
+                Your professional practice page has been <strong>SUSPENDED</strong> by our registry team and has been removed from public view. This is a serious action taken due to violations of PHB registry policies.
+            </p>
+
+            <!-- Practice Page Information -->
+            <div class="info-box">
+                <div class="info-heading">Suspended Practice Page</div>
+                <div class="practice-name">{{ practice_name }}</div>
+
+                <p style="margin: 0; font-size: 14px; color: #666666;">
+                    <strong>Date Suspended:</strong> {{ suspended_date }}<br>
+                    <strong>Suspended By:</strong> PHB Registry Team<br>
+                    <strong>Current Status:</strong> Suspended
+                </p>
+            </div>
+
+            <!-- Reason for Suspension -->
+            <div class="danger-box">
+                <div class="danger-heading">Reason for Suspension</div>
+                <p class="danger-text">{{ suspension_reason }}</p>
+            </div>
+
+            <p class="text">
+                Your practice page has been permanently removed from the public directory and will not be visible to patients. This action was taken due to serious violations of our registry policies.
+            </p>
+
+            <!-- Required Actions -->
+            <div class="requirements-section">
+                <div class="requirements-heading">Required Actions for Reinstatement</div>
+
+                <div class="requirement">
+                    <strong>Review the suspension reason:</strong> Carefully understand what violations occurred and why your page was suspended.
+                </div>
+
+                <div class="requirement">
+                    <strong>Address all violations:</strong> Take corrective actions to resolve the issues that led to the suspension.
+                </div>
+
+                <div class="requirement">
+                    <strong>Contact our registry team:</strong> Email <a href="mailto:{{ registry_email }}" style="color: #000000;">{{ registry_email }}</a> to discuss reinstatement and provide evidence of corrective actions.
+                </div>
+
+                <div class="requirement">
+                    <strong>Pay applicable penalty fees:</strong> Any penalty fees must be paid in full before reinstatement can be considered.
+                </div>
+
+                <div class="requirement">
+                    <strong>Submit updated information:</strong> Provide updated practice page content that complies with all PHB registry policies.
+                </div>
+            </div>
+
+            <!-- Penalty Notice (if applicable) -->
+            {% if has_penalty %}
+            <div class="danger-box">
+                <div class="danger-heading">Penalty Fee Notice</div>
+                <p class="danger-text">
+                    A penalty fee of <strong>₦{{ penalty_amount }}</strong> applies to this violation.
+                    Payment instructions will be sent separately. Your page cannot be reinstated until the fee is paid and all issues are resolved.
+                </p>
+            </div>
+            {% endif %}
+
+            <!-- Reinstatement Process -->
+            <p class="text" style="margin-top: 32px;">
+                <strong>Reinstatement Process</strong>
+            </p>
+
+            <p class="text">
+                Your page will remain suspended until:<br>
+                1. You contact our team and discuss the suspension<br>
+                2. All violations are addressed<br>
+                3. Any penalty fees are paid in full<br>
+                4. Your page content is updated to comply with policies<br>
+                5. Our team reviews and approves reinstatement
+            </p>
+
+            <!-- Warning -->
+            <div class="danger-box" style="margin-top: 32px;">
+                <div class="danger-heading">⚠️ Important Warning</div>
+                <p class="danger-text">
+                    <strong>Repeated violations may result in permanent suspension and removal from the PHB professional registry.</strong> This could affect your ability to practice and your professional standing.
+                </p>
+            </div>
+
+            <!-- Actions -->
+            <a href="mailto:{{ registry_email }}?subject=Practice Page Suspended - {{ practice_name }}" class="button">Contact Registry Team</a>
+
+            <p class="text" style="margin-top: 32px; font-size: 13px; color: #666666;">
+                If you believe this suspension was made in error, please contact our registry team immediately at <a href="mailto:{{ registry_email }}" style="color: #000000;">{{ registry_email }}</a> or call {{ phb_phone }}.
+            </p>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <p><strong>Public Health Bureau</strong></p>
+            <p>Professional Registry Division</p>
+            <p>Federal Capital Territory, Abuja, Nigeria</p>
+
+            <div class="footer-divider"></div>
+
+            <p>
+                Practice Page: {{ practice_name }}<br>
+                Email: <a href="mailto:{{ registry_email }}">{{ registry_email }}</a> |
+                Phone: {{ phb_phone }}
+            </p>
+
+            <p style="margin-top: 16px;">
+                <a href="{{ frontend_url }}/privacy">Privacy Policy</a> |
+                <a href="{{ frontend_url }}/terms">Terms of Service</a>
+            </p>
+
+            <p style="margin-top: 16px; color: #999999;">
+                © 2025 Public Health Bureau. All rights reserved.
+            </p>
+        </div>
+    </div>
+</body>
+</html>

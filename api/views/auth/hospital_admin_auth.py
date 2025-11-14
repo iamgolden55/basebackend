@@ -27,6 +27,7 @@ from api.models import CustomUser, Hospital
 from api.models.medical.hospital_auth import HospitalAdmin
 from api.serializers import HospitalAdminLoginSerializer, Hospital2FAVerificationSerializer
 from api.utils.location_utils import get_location_from_ip, get_client_ip
+from api.utils.cookie_helpers import set_jwt_cookies, clear_jwt_cookies
 
 # Logger setup
 logger = logging.getLogger(__name__)
@@ -356,6 +357,7 @@ class HospitalAdminLoginView(SecurityMixin, APIView):
     Dedicated login endpoint for hospital administrators.
     This enforces domain validation and additional security measures.
     """
+    authentication_classes = []  # Disable authentication - this is the login endpoint!
     permission_classes = [AllowAny]
     throttle_classes = [HospitalAdminLoginRateThrottle]
     
@@ -574,6 +576,7 @@ class VerifyHospitalAdmin2FAView(SecurityMixin, APIView):
     """
     Endpoint for verifying hospital admin 2FA codes and completing login.
     """
+    authentication_classes = []  # Disable authentication - users are logging in!
     permission_classes = [AllowAny]
     throttle_classes = [HospitalAdmin2FARateThrottle]
     
@@ -644,34 +647,36 @@ class VerifyHospitalAdmin2FAView(SecurityMixin, APIView):
             
             # Generate tokens
             refresh = RefreshToken.for_user(user)
-            
+            access_token = str(refresh.access_token)
+            refresh_token = str(refresh)
+
             # Clear the code from cache
             cache.delete(cache_key)
-            
+
             # If remember device is set, store a trusted device token
             if remember_device and device_id:
                 trusted_device_key = f"trusted_device_{user.id}_{device_id}"
                 trusted_token = secrets.token_hex(32)
                 # Store for 30 days
                 cache.set(trusted_device_key, trusted_token, timeout=60*60*24*30)
-            
+
             # Get user's hospital
             hospital_admin = HospitalAdmin.objects.get(user=user)
             hospital = hospital_admin.hospital
-            
+
             # Check if password change is required
             password_change_required = hospital_admin.password_change_required
-            
+
             # Log successful login
             logger.info(f"Hospital admin login successful: {email} for {hospital.name}, password change required: {password_change_required}")
-            
+
             # Create response with enhanced data
-            return Response({
+            response_data = {
                 "status": "success",
                 "message": "Login successful",
                 "tokens": {
-                    "access": str(refresh.access_token),
-                    "refresh": str(refresh)
+                    "access": access_token,
+                    "refresh": refresh_token
                 },
                 "user_data": {
                     'id': user.id,
@@ -687,7 +692,14 @@ class VerifyHospitalAdmin2FAView(SecurityMixin, APIView):
                     'position': hospital_admin.position,
                     'password_change_required': password_change_required
                 }
-            })
+            }
+
+            response = Response(response_data)
+
+            # Set JWT tokens as httpOnly cookies
+            set_jwt_cookies(response, access_token, refresh_token)
+
+            return response
                 
         except (CustomUser.DoesNotExist, HospitalAdmin.DoesNotExist) as e:
             return Response({

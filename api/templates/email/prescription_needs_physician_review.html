@@ -1,0 +1,432 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<div class="email-container">
+    <div class="header">
+        <h1>Prescription Request Escalated - Physician Review Needed ⚕️</h1>
+    </div>
+
+    <div class="content">
+        <p>Hello Dr. {{ doctor_name }},</p>
+
+        {% if urgency == 'urgent' %}
+        <div class="urgent-alert">
+            <h3>⚠️ URGENT - IMMEDIATE PHYSICIAN REVIEW REQUIRED</h3>
+            <p>This prescription request requires urgent physician assessment.</p>
+        </div>
+        {% endif %}
+
+        <p>A prescription request has been escalated by our clinical pharmacist and requires your direct physician review and decision.</p>
+
+        <div class="escalation-alert">
+            <h3>🚨 Escalation Summary</h3>
+            <div class="detail-row">
+                <span class="label">Escalated By:</span>
+                <span class="value">{{ pharmacist_name }}, Clinical Pharmacist</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Escalation Date:</span>
+                <span class="value">{{ review_date }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Escalation Category:</span>
+                <span class="value"><strong>{{ escalation_category }}</strong></span>
+            </div>
+        </div>
+
+        <div class="pharmacist-notes">
+            <h3>Pharmacist's Clinical Assessment</h3>
+            <p><strong>Reason for Escalation:</strong></p>
+            <p style="font-style: italic; margin-top: 10px;">{{ escalation_reason }}</p>
+
+            {% if clinical_concerns %}
+            <div style="margin-top: 15px; padding: 10px; background-color: #fff3e0; border-left: 3px solid #ff6f00; border-radius: 3px;">
+                <p style="margin: 0;"><strong>⚠️ Clinical Concerns:</strong></p>
+                <p style="margin: 10px 0 0 0;">{{ clinical_concerns }}</p>
+            </div>
+            {% endif %}
+
+            {% if pharmacist_recommendation %}
+            <p style="margin-top: 15px;"><strong>Pharmacist Recommendation:</strong> {{ pharmacist_recommendation }}</p>
+            {% endif %}
+        </div>
+
+        <div class="request-summary">
+            <h3>Request Details</h3>
+            <div class="detail-row">
+                <span class="label">Patient Name:</span>
+                <span class="value">{{ patient_name }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Patient HPN:</span>
+                <span class="value">{{ patient_hpn }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Reference Number:</span>
+                <span class="value">{{ request_reference }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Original Request Date:</span>
+                <span class="value">{{ request_date }}</span>
+            </div>
+        </div>
+
+        <div class="patient-info">
+            <h3>Patient Information</h3>
+            <div class="detail-row">
+                <span class="label">Date of Birth:</span>
+                <span class="value">{{ patient_dob }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Age:</span>
+                <span class="value">{{ patient_age }} years</span>
+            </div>
+            {% if allergies %}
+            <div class="detail-row">
+                <span class="label">Known Allergies:</span>
+                <span class="value" style="color: #d32f2f; font-weight: bold;">⚠️ {{ allergies }}</span>
+            </div>
+            {% endif %}
+            {% if current_medications %}
+            <div class="detail-row">
+                <span class="label">Current Medications:</span>
+                <span class="value">{{ current_medications }}</span>
+            </div>
+            {% endif %}
+            {% if medical_conditions %}
+            <div class="detail-row">
+                <span class="label">Medical Conditions:</span>
+                <span class="value">{{ medical_conditions }}</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="medications-list">
+            <h3>Requested Medications ({{ medication_count }})</h3>
+            <table class="medication-table">
+                <thead>
+                    <tr>
+                        <th>Medication</th>
+                        <th>Requested Qty</th>
+                        <th>Dosage</th>
+                        <th>Type</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for medication in medications %}
+                    <tr {% if medication.flagged %}style="background-color: #ffebee;"{% endif %}>
+                        <td>
+                            <strong>{{ medication.name }}</strong>
+                            {% if medication.flagged %}<span style="color: #d32f2f;"> ⚠️</span>{% endif %}<br>
+                            <small>{{ medication.strength }} - {{ medication.form }}</small>
+                        </td>
+                        <td>{{ medication.quantity }}</td>
+                        <td>{{ medication.dosage }}</td>
+                        <td>
+                            {% if medication.is_repeat %}
+                            <span class="badge badge-repeat">Repeat</span>
+                            {% else %}
+                            <span class="badge badge-new">New</span>
+                            {% endif %}
+                            {% if medication.controlled %}
+                            <br><span class="badge badge-controlled">Controlled</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% if medication.flag_reason %}
+                    <tr>
+                        <td colspan="4" style="background-color: #fff3e0; padding: 10px;">
+                            <small><strong>⚠️ Flag Reason:</strong> {{ medication.flag_reason }}</small>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if request_notes %}
+        <div class="patient-notes">
+            <h3>Patient's Additional Notes</h3>
+            <p style="font-style: italic;">"{{ request_notes }}"</p>
+        </div>
+        {% endif %}
+
+        <div class="pharmacy-info">
+            <h3>Nominated Pharmacy</h3>
+            <p><strong>{{ pharmacy_name }}</strong></p>
+            <p>{{ pharmacy_address }}</p>
+        </div>
+
+        <div class="action-required">
+            <h3>Physician Action Required 🎯</h3>
+            <p><strong>This request requires your direct clinical decision as the physician:</strong></p>
+            <ul>
+                <li><strong>Review & Approve:</strong> If clinically appropriate despite pharmacist concerns</li>
+                <li><strong>Modify & Approve:</strong> Adjust medications, dosages, or quantities</li>
+                <li><strong>Request Patient Appointment:</strong> Schedule in-person consultation</li>
+                <li><strong>Reject with Reasoning:</strong> Decline if clinically unsafe or inappropriate</li>
+            </ul>
+
+            <div style="margin-top: 15px; padding: 10px; background-color: #e8f5e9; border-radius: 5px;">
+                <p style="margin: 0; color: #2e7d32;"><strong>💡 Tip:</strong> Consider contacting the pharmacist directly to discuss clinical concerns before making your decision.</p>
+            </div>
+
+            {% if urgency == 'urgent' %}
+            <p style="color: #d32f2f; font-weight: bold; margin-top: 15px;">⏰ SLA: This urgent escalation should be reviewed within 24 hours.</p>
+            {% else %}
+            <p style="margin-top: 15px;">⏰ Standard SLA: Please review within 72 hours.</p>
+            {% endif %}
+        </div>
+
+        <div class="cta-button">
+            <a href="{{ frontend_url }}/professional/prescriptions/{{ request_id }}" class="button">Review Escalated Request</a>
+        </div>
+
+        <div class="footer-note">
+            <p>This is an automated notification. Please do not reply to this email.</p>
+            <p>For urgent clinical consultation, contact the pharmacist directly through the dashboard.</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .email-container {
+        max-width: 600px;
+        margin: 0 auto;
+        font-family: Arial, sans-serif;
+    }
+
+    .header {
+        background-color: #f57c00;
+        color: white;
+        padding: 20px;
+        text-align: center;
+        border-radius: 5px 5px 0 0;
+    }
+
+    .header h1 {
+        color: white;
+        margin: 0;
+    }
+
+    .content {
+        padding: 20px;
+        background-color: #ffffff;
+        border-radius: 0 0 5px 5px;
+    }
+
+    .urgent-alert {
+        background-color: #ffebee;
+        border: 2px solid #f44336;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+        text-align: center;
+    }
+
+    .urgent-alert h3 {
+        color: #c62828;
+        margin: 0 0 10px 0;
+    }
+
+    .urgent-alert p {
+        color: #d32f2f;
+        font-weight: bold;
+        margin: 0;
+    }
+
+    .escalation-alert {
+        background-color: #fff3e0;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #f57c00;
+    }
+
+    .escalation-alert h3 {
+        margin-top: 0;
+        color: #e65100;
+    }
+
+    .pharmacist-notes {
+        background-color: #e1f5fe;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 3px solid #0288d1;
+    }
+
+    .pharmacist-notes h3 {
+        margin-top: 0;
+        color: #01579b;
+    }
+
+    .request-summary {
+        background-color: #f3e5f5;
+        padding: 20px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #6a1b9a;
+    }
+
+    .request-summary h3 {
+        margin-top: 0;
+        color: #4a148c;
+    }
+
+    .patient-info {
+        background-color: #fce4ec;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .patient-info h3 {
+        margin-top: 0;
+        color: #c2185b;
+    }
+
+    .detail-row {
+        margin: 10px 0;
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .label {
+        font-weight: bold;
+        color: #666;
+    }
+
+    .value {
+        color: #333;
+    }
+
+    .medications-list {
+        background-color: #f5f5f5;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .medications-list h3 {
+        margin-top: 0;
+        color: #424242;
+    }
+
+    .medication-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+    }
+
+    .medication-table th {
+        background-color: #e0e0e0;
+        padding: 10px;
+        text-align: left;
+        font-weight: bold;
+        border-bottom: 2px solid #bdbdbd;
+    }
+
+    .medication-table td {
+        padding: 10px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+
+    .badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 3px;
+        font-size: 12px;
+        font-weight: bold;
+    }
+
+    .badge-repeat {
+        background-color: #4caf50;
+        color: white;
+    }
+
+    .badge-new {
+        background-color: #ff9800;
+        color: white;
+    }
+
+    .badge-controlled {
+        background-color: #d32f2f;
+        color: white;
+        margin-top: 5px;
+    }
+
+    .patient-notes {
+        background-color: #fff9e6;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 3px solid #ffc107;
+    }
+
+    .patient-notes h3 {
+        margin-top: 0;
+        color: #f57c00;
+    }
+
+    .pharmacy-info {
+        background-color: #e8f5e9;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .pharmacy-info h3 {
+        margin-top: 0;
+        color: #2e7d32;
+    }
+
+    .action-required {
+        background-color: #ffebee;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #d32f2f;
+    }
+
+    .action-required h3 {
+        margin-top: 0;
+        color: #c62828;
+    }
+
+    .action-required ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .cta-button {
+        text-align: center;
+        margin: 30px 0;
+    }
+
+    .button {
+        display: inline-block;
+        background-color: #f57c00;
+        color: white !important;
+        padding: 15px 30px;
+        text-decoration: none;
+        border-radius: 5px;
+        font-weight: bold;
+        font-size: 16px;
+    }
+
+    .button:hover {
+        background-color: #e65100;
+    }
+
+    .footer-note {
+        border-top: 1px solid #eee;
+        margin-top: 20px;
+        padding-top: 20px;
+        color: #666;
+        text-align: center;
+        font-size: 14px;
+    }
+</style>
+{% endblock %}

@@ -28,6 +28,7 @@ from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 from api.models import CustomUser
 from api.models.medical.medical_record_access import MedicalRecordAccess
+from api.utils.cookie_helpers import set_jwt_cookies, clear_jwt_cookies
 from api.serializers import (
     UserSerializer, CustomTokenObtainPairSerializer,
     EmailVerificationSerializer, UserProfileSerializer,
@@ -494,7 +495,11 @@ class LoginView(APIView):
                 "email_sent": email_sent,
                 "requires_verification": True
             }, status=status.HTTP_403_FORBIDDEN)
-            
+        
+        # Refresh user from database to get latest otp_required_for_login setting
+        user.refresh_from_db()
+
+        # Check if OTP verification is required for this user
         if user.otp_required_for_login:
             otp = user.generate_otp()
             
@@ -542,9 +547,11 @@ class LoginView(APIView):
                     "message": "Failed to send OTP email. Please try again.",
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
-        # If OTP not required and email is verified, proceed with normal login
+        # OTP not required - proceed with normal login
         refresh = RefreshToken.for_user(user)
-        
+        access_token = str(refresh.access_token)
+        refresh_token = str(refresh)
+
         # Create user data dictionary
         user_data = {
             'id': user.id,
@@ -565,16 +572,25 @@ class LoginView(APIView):
             'secondary_languages': format_secondary_languages(user.secondary_languages),
             'custom_language': user.custom_language
         }
-        
-        return Response({
+
+        # Create response with tokens in JSON (backwards compatibility)
+        # Frontend can ignore these once migrated to cookie auth
+        response_data = {
             "status": "success",
             "message": "Login successful",
             "tokens": {
-                "access": str(refresh.access_token),
-                "refresh": str(refresh)
+                "access": access_token,
+                "refresh": refresh_token
             },
-            "user_data": user_data
-        })
+            "user": user_data  # Changed from "user_data" to "user" to match frontend expectations
+        }
+
+        response = Response(response_data)
+
+        # Set JWT tokens as httpOnly cookies for enhanced security
+        set_jwt_cookies(response, access_token, refresh_token)
+
+        return response
 
 class UserProfileUpdateView(RetrieveUpdateAPIView):
     serializer_class = UserProfileSerializer
@@ -681,7 +697,9 @@ class VerifyLoginOTPView(APIView):
                 
                 # Generate tokens
                 refresh = RefreshToken.for_user(user)
-                
+                access_token = str(refresh.access_token)
+                refresh_token = str(refresh)
+
                 # Create user data dictionary
                 user_data = {
                     'id': user.id,
@@ -702,17 +720,26 @@ class VerifyLoginOTPView(APIView):
                     'secondary_languages': format_secondary_languages(user.secondary_languages),
                     'custom_language': user.custom_language
                 }
-                
+
                 # Log successful verification
                 logger.info(f"Successful OTP verification for user: {email}")
-                
-                return Response({
+
+                response_data = {
+                    'status': 'success',
+                    'message': 'Login successful',
                     'tokens': {
-                        'access': str(refresh.access_token),
-                        'refresh': str(refresh)
+                        'access': access_token,
+                        'refresh': refresh_token
                     },
                     'user_data': user_data
-                })
+                }
+
+                response = Response(response_data)
+
+                # Set JWT tokens as httpOnly cookies
+                set_jwt_cookies(response, access_token, refresh_token)
+
+                return response
             
             # Log failed attempt
             logger.warning(f"Failed OTP verification attempt for user: {email}")
@@ -1106,12 +1133,12 @@ class ChangePasswordView(APIView):
                 # Set new password
                 user.set_password(serializer.validated_data['new_password'])
                 user.save()
-                
+
                 # Get location info from IP and device info for the email
                 ip_address = get_client_ip(request)
                 location_info = get_location_from_ip(ip_address)
                 device = request.META.get('HTTP_USER_AGENT', 'Unknown Device')
-                
+
                 # Prepare context for the email template
                 context = {
                     'user': user,
@@ -1120,11 +1147,11 @@ class ChangePasswordView(APIView):
                     'device': device,
                     'frontend_url': os.environ.get('NEXTJS_URL', '').rstrip('/')
                 }
-                
+
                 # Render the email template
                 html_message = render_to_string('email/password_change_confirmation.html', context)
                 plain_message = strip_tags(html_message)
-                
+
                 # Send the confirmation email
                 try:
                     send_mail(
@@ -1138,10 +1165,125 @@ class ChangePasswordView(APIView):
                     logger.info(f"Password change confirmation email sent to {user.email}")
                 except Exception as e:
                     logger.error(f"Failed to send password change confirmation email: {str(e)}")
-                
+
                 return Response({'message': 'Password changed successfully! 🎉'})
             else:
                 return Response({'error': 'Current password is incorrect'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class LogoutView(APIView):
+    """
+    Logout endpoint that clears JWT cookies and blacklists refresh token.
+
+    This endpoint properly logs users out by:
+    1. Blacklisting the refresh token (if token rotation is enabled)
+    2. Clearing httpOnly cookies containing JWT tokens
+    3. Ensuring no auth state remains on the client
+
+    Authentication:
+        Requires valid JWT token (either from cookie or Authorization header)
+
+    Request:
+        POST /api/logout/
+        Optional body for backwards compatibility:
+        {
+            "refresh": "refresh_token_string"
+        }
+
+    Response Success (200):
+        {
+            "status": "success",
+            "message": "Logged out successfully"
+        }
+
+        Cookies Cleared:
+        - access_token: Removed
+        - refresh_token: Removed
+
+    Response Failure (400):
+        {
+            "status": "error",
+            "detail": "Refresh token not provided"
+        }
+
+    Security:
+        - Blacklists refresh token to prevent reuse
+        - Clears httpOnly cookies to remove client-side tokens
+        - Logs logout action for audit purposes
+
+    Example Usage (Frontend):
+        ```javascript
+        // Cookies automatically sent with request
+        const response = await fetch('/api/logout/', {
+            method: 'POST',
+            credentials: 'include',  // Important: sends cookies
+        });
+
+        // Tokens automatically cleared from cookies
+        // No manual cleanup needed
+        ```
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """
+        Handle logout by blacklisting refresh token and clearing cookies.
+
+        Process:
+        1. Try to get refresh token from cookie
+        2. Fall back to request body if cookie not found
+        3. Blacklist the refresh token if available
+        4. Clear JWT cookies from response
+        5. Return success response
+        """
+        try:
+            # Try to get refresh token from cookie first
+            refresh_token = request.COOKIES.get(settings.JWT_AUTH_REFRESH_COOKIE)
+
+            # Fall back to request body for backwards compatibility
+            if not refresh_token:
+                refresh_token = request.data.get('refresh')
+
+            # If we have a refresh token, blacklist it
+            if refresh_token:
+                try:
+                    token = RefreshToken(refresh_token)
+                    # Blacklist the token to prevent reuse
+                    token.blacklist()
+                    logger.info(f"Refresh token blacklisted for user: {request.user.email}")
+                except Exception as e:
+                    # Log the error but don't fail the logout
+                    logger.warning(f"Failed to blacklist token during logout: {str(e)}")
+
+            # Create success response
+            response = Response(
+                {
+                    'status': 'success',
+                    'message': 'Logged out successfully'
+                },
+                status=status.HTTP_200_OK
+            )
+
+            # Clear JWT cookies
+            clear_jwt_cookies(response)
+
+            # Log successful logout
+            logger.info(f"User logged out successfully: {request.user.email}")
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error during logout: {str(e)}")
+            # Still clear cookies even if blacklisting failed
+            response = Response(
+                {
+                    'status': 'success',
+                    'message': 'Logged out successfully'
+                },
+                status=status.HTTP_200_OK
+            )
+            clear_jwt_cookies(response)
+            return response
 
       

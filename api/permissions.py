@@ -21,6 +21,31 @@ class IsPatient(permissions.BasePermission):
         return obj.user == request.user
 
 
+class IsPharmacist(permissions.BasePermission):
+    """
+    Permission class to check if user is an authenticated pharmacist
+    with valid license and prescription access permissions.
+    """
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+
+        # Check if user has pharmacist role
+        if request.user.role != 'pharmacist':
+            return False
+
+        # Check if pharmacist profile exists
+        try:
+            pharmacist = request.user.pharmacist_profile
+
+            # Verify license and permissions
+            access_check = pharmacist.can_access_prescriptions()
+            return access_check['allowed']
+
+        except AttributeError:
+            return False
+
+
 class IsHospitalAdmin(permissions.BasePermission):
     """
     Permission class to check if user is a hospital administrator.
@@ -123,5 +148,85 @@ class IsGuidelineOwnerOrReadOnly(permissions.BasePermission):
                 return obj.organization == hospital_admin.hospital
             except:
                 return False
-        
+
         return False
+
+
+class HasRegistryPermission(permissions.BasePermission):
+    """
+    Check if user has specific registry permission.
+    Usage: permission_required = 'view_applications'
+    """
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        # Superusers always have access
+        if request.user.is_superuser:
+            return True
+
+        # Check if user has registry_role with required permission
+        required_permission = getattr(view, 'permission_required', None)
+        if not required_permission:
+            return False
+
+        user_role = request.user.registry_role
+        if not user_role or not user_role.is_active:
+            return False
+
+        return required_permission in user_role.permissions
+
+
+class IsPlatformAdmin(permissions.BasePermission):
+    """
+    Only Platform Admins (superusers or users with platform_admin role).
+    """
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser:
+            return True
+
+        user_role = request.user.registry_role
+        return (
+            user_role and
+            user_role.is_active and
+            user_role.role_type == 'platform_admin'
+        )
+
+
+class CanReviewApplications(permissions.BasePermission):
+    """
+    Users who can review and approve/reject applications.
+    """
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser:
+            return True
+
+        user_role = request.user.registry_role
+        if not user_role or not user_role.is_active:
+            return False
+
+        return 'review_applications' in user_role.permissions
+
+
+class CanVerifyDocuments(permissions.BasePermission):
+    """
+    Users who can verify documents.
+    """
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser:
+            return True
+
+        user_role = request.user.registry_role
+        if not user_role or not user_role.is_active:
+            return False
+
+        return 'verify_documents' in user_role.permissions

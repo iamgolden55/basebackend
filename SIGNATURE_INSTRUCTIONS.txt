@@ -1,0 +1,10 @@
+Please save your signature image to this location:
+
+📁 /Users/new/Newphb/basebackend/media/signatures/admin_signature.png
+
+Instructions:
+1. Save the signature image from the chat as 'admin_signature.png'
+2. Save it with a transparent background (PNG format)
+3. Place it in: /Users/new/Newphb/basebackend/media/signatures/
+
+Once saved, I'll update the certificate to include your signature!

@@ -70,20 +70,21 @@ def create_hospital_admin_account(sender, instance, created, **kwargs):
                 
             # Generate standardized PHB admin username - this is what they'll use to login
             # This is NOT a real email inbox, just a username format
+            # Always generate secure password regardless of environment
+            admin_password = generate_secure_password()
+
             if settings.DEBUG:
                 # Development format - using example.com domain
                 admin_username = f"admin.{hospital.name.lower().replace(' ', '')}@example.com"
-                admin_password = "Password123!"
             else:
                 # Production format - using phb.com domain
                 admin_username = f"admin.{hospital.name.lower().replace(' ', '')}@phb.com"
-                admin_password = generate_secure_password()
             
             # Create the CustomUser account with hospital admin role
             with transaction.atomic():
                 user = CustomUser.objects.create_user(
                     username=admin_username,  # Use the standardized admin username format
-                    email=real_contact_email or admin_username,  # Store real email if we have it, otherwise use admin username
+                    email=admin_username,  # Use admin username for login authentication
                     password=admin_password,
                     first_name="Hospital",
                     last_name=f"Admin ({hospital.name[0:4]})",
@@ -91,7 +92,11 @@ def create_hospital_admin_account(sender, instance, created, **kwargs):
                     is_staff=True,  # Hospital admins have staff privileges
                     is_email_verified=True,  # Auto-verify for immediate access
                 )
-                
+
+                # Link user to hospital for permission checks
+                user.hospital = hospital
+                user.save()
+
                 # Create the HospitalAdmin profile
                 admin = HospitalAdmin.objects.create(
                     user=user,
@@ -99,7 +104,7 @@ def create_hospital_admin_account(sender, instance, created, **kwargs):
                     name=f"Hospital Admin for {hospital.name}",
                     position="System Administrator",
                     email=admin_username,  # Store the login username for authentication
-                    contact_email=real_contact_email  # Store the real contact email if we have it
+                    contact_email=real_contact_email  # Store the real contact email for notifications
                 )
                 
                 logger.info(f"Created hospital admin account for: {hospital.name}")
@@ -151,7 +156,7 @@ def send_hospital_admin_credentials(hospital, contact_email, password, admin_use
             fail_silently=False,
         )
         
-        logger.info(f"Sent welcome email with credentials to hospital admin: {email}")
+        logger.info(f"Sent welcome email with credentials to hospital admin: {contact_email}")
         
     except Exception as e:
         logger.error(f"Failed to send hospital admin credentials email: {str(e)}")

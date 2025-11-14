@@ -28,6 +28,7 @@ from api.models.medical.appointment_notification import AppointmentNotification
 from api.models.medical.department import Department
 from api.models.medical.appointment import AppointmentType
 from api.models.medical.medication import Medication, MedicationCatalog
+from api.utils.email import send_hospital_registration_approved_email
 from api.models.medical.medical_record import MedicalRecord
 from api.serializers import (
     HospitalRegistrationSerializer, HospitalSerializer, HospitalLocationSerializer,
@@ -35,7 +36,8 @@ from api.serializers import (
     HospitalAdminRegistrationSerializer, ExistingUserToAdminSerializer,
     AppointmentCancelSerializer, AppointmentRescheduleSerializer,
     AppointmentApproveSerializer, AppointmentReferSerializer,
-    MedicationSerializer, PrescriptionSerializer, DepartmentSerializer, DoctorSerializer
+    MedicationSerializer, PrescriptionSerializer, DepartmentSerializer, DoctorSerializer,
+    ComprehensiveHospitalCreationSerializer
 )
 from api.models.medical.appointment import Appointment
 from api.utils.location_utils import get_location_from_ip
@@ -200,11 +202,55 @@ class ApproveHospitalRegistrationView(APIView):
         approved_hospital_id = approved_hospital.hospital.id if approved_hospital else None
         
         if user_hospital_id == registration.hospital.id or approved_hospital_id == registration.hospital.id:
-            
-        
+
+
             print("✅ All checks passed, proceeding with approval")
             # Approve the registration
             registration.approve_registration()
+
+            # Send approval email to patient
+            try:
+                # Get patient details
+                patient = registration.user
+                hospital = registration.hospital
+
+                # Get patient's full name
+                patient_full_name = patient.get_full_name() if hasattr(patient, 'get_full_name') else f"{patient.first_name} {patient.last_name}"
+
+                # Format hospital address
+                hospital_address_parts = []
+                if hasattr(hospital, 'address') and hospital.address:
+                    hospital_address_parts.append(hospital.address)
+                if hasattr(hospital, 'city') and hospital.city:
+                    hospital_address_parts.append(hospital.city)
+                if hasattr(hospital, 'state') and hospital.state:
+                    hospital_address_parts.append(hospital.state)
+                if hasattr(hospital, 'country') and hospital.country:
+                    hospital_address_parts.append(hospital.country)
+
+                hospital_address = ", ".join(hospital_address_parts) if hospital_address_parts else "Address not available"
+
+                # Send email
+                email_sent = send_hospital_registration_approved_email(
+                    patient_email=patient.email,
+                    patient_name=patient_full_name,
+                    hospital_name=hospital.name,
+                    hospital_address=hospital_address,
+                    approval_date=registration.approved_date or timezone.now(),
+                    hpn=patient.hpn if hasattr(patient, 'hpn') else None,
+                    hospital_phone=hospital.phone if hasattr(hospital, 'phone') else None,
+                    hospital_email=hospital.email if hasattr(hospital, 'email') else None,
+                    hospital_profile_url=None  # Can add hospital profile URL if available
+                )
+
+                if email_sent:
+                    print(f"✅ Approval email sent to {patient.email}")
+                else:
+                    print(f"⚠️ Failed to send approval email to {patient.email}")
+            except Exception as e:
+                # Log error but don't fail the approval
+                print(f"⚠️ Error sending approval email: {str(e)}")
+                logging.error(f"Failed to send hospital registration approval email: {str(e)}")
 
             return Response({
             "message": "Registration approved successfully! 🎉",
@@ -931,6 +977,49 @@ class HospitalLocationViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     @action(detail=False, methods=['get'])
+    def search(self, request):
+        """
+        Search hospitals by name, state, or city with pagination.
+        Query Parameters:
+            q: search query (searches in hospital name)
+            state: filter by state
+            city: filter by city
+            limit: max results to return (default 50, max 100)
+        """
+        query_param = request.query_params.get('q', '').strip()
+        state_param = request.query_params.get('state', '').strip()
+        city_param = request.query_params.get('city', '').strip()
+        limit = min(int(request.query_params.get('limit', 50)), 100)  # Max 100 results
+
+        # Start with all hospitals
+        hospitals = Hospital.objects.all()
+
+        # Apply filters
+        if query_param:
+            hospitals = hospitals.filter(
+                Q(name__icontains=query_param) |
+                Q(address__icontains=query_param)
+            )
+
+        if state_param:
+            hospitals = hospitals.filter(state__iexact=state_param)
+
+        if city_param:
+            hospitals = hospitals.filter(city__iexact=city_param)
+
+        # Apply limit
+        hospitals = hospitals[:limit]
+
+        # Serialize results
+        serializer = HospitalSerializer(hospitals, many=True)
+
+        return Response({
+            'hospitals': serializer.data,
+            'total': hospitals.count(),
+            'message': f'Found {len(serializer.data)} hospital(s)' if query_param else None
+        })
+
+    @action(detail=False, methods=['get'])
     def nearby(self, request):
         """
         Find nearby hospitals based on user's location or IP address.
@@ -1246,6 +1335,618 @@ def hospital_list(request):
     return Response({
         'hospitals': serializer.data
     })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def hospital_analytics(request):
+    """
+    Get hospital analytics data including real staff counts and appointment metrics
+    """
+    try:
+        # Get hospital data
+        hospitals = Hospital.objects.all()
+        verified_hospitals = hospitals.filter(is_verified=True)
+        total_bed_capacity = sum(h.bed_capacity for h in hospitals if h.bed_capacity)
+        
+        # Get actual medical staff count
+        medical_staff_roles = ['doctor', 'nurse', 'staff', 'hospital_admin']
+        medical_staff_count = CustomUser.objects.filter(role__in=medical_staff_roles).count()
+        
+        # Get today's appointments
+        from datetime import date, timedelta
+        today = date.today()
+        today_appointments = Appointment.objects.filter(
+            appointment_date=today
+        ).count()
+        
+        # Calculate growth metrics (compared to last week)
+        last_week = today - timedelta(days=7)
+        
+        # Hospital growth (hospitals verified this week)
+        recently_verified_hospitals = Hospital.objects.filter(
+            verification_date__gte=last_week
+        ).count()
+        hospital_growth = (recently_verified_hospitals / max(verified_hospitals.count(), 1)) * 100
+        
+        # Patient growth (new patient registrations this week vs last week)
+        this_week_patients = CustomUser.objects.filter(
+            role='patient',
+            date_joined__gte=last_week
+        ).count()
+        last_week_patients = CustomUser.objects.filter(
+            role='patient',
+            date_joined__gte=last_week - timedelta(days=7),
+            date_joined__lt=last_week
+        ).count()
+        patient_growth = ((this_week_patients - last_week_patients) / max(last_week_patients, 1)) * 100
+        
+        # Staff growth (new staff this week)
+        new_staff_this_week = CustomUser.objects.filter(
+            role__in=medical_staff_roles,
+            date_joined__gte=last_week
+        ).count()
+        staff_growth = (new_staff_this_week / max(medical_staff_count - new_staff_this_week, 1)) * 100
+        
+        # Appointment growth (this week vs last week)
+        this_week_appointments = Appointment.objects.filter(
+            appointment_date__gte=last_week
+        ).count()
+        last_week_appointments = Appointment.objects.filter(
+            appointment_date__gte=last_week - timedelta(days=7),
+            appointment_date__lt=last_week
+        ).count()
+        appointment_growth = ((this_week_appointments - last_week_appointments) / max(last_week_appointments, 1)) * 100
+        
+        # Get real active patients count (registered patients in the system)
+        active_patients = CustomUser.objects.filter(
+            role='patient',
+            is_active=True
+        ).count()
+        
+        # Calculate bed utilization from current admissions
+        from api.models.medical.patient_admission import PatientAdmission
+        current_admissions = PatientAdmission.objects.filter(
+            actual_discharge_date__isnull=True,  # Currently admitted patients
+            status='admitted'
+        ).count()
+        
+        # Calculate real bed utilization rate
+        bed_utilization = (current_admissions / total_bed_capacity * 100) if total_bed_capacity > 0 else 0
+        
+        analytics_data = {
+            'verified_hospitals': verified_hospitals.count(),
+            'total_hospitals': hospitals.count(),
+            'active_patients': active_patients,
+            'medical_staff': medical_staff_count,
+            'appointments_today': today_appointments,
+            'total_bed_capacity': total_bed_capacity,
+            'bed_utilization': round(bed_utilization, 1),
+            'growth_metrics': {
+                'hospitals': round(hospital_growth, 1),
+                'patients': round(patient_growth, 1),
+                'staff': round(staff_growth, 1),
+                'appointments': round(appointment_growth, 1)
+            }
+        }
+        
+        return Response(analytics_data)
+        
+    except Exception as e:
+        logger.error(f"❌ Error fetching hospital analytics: {str(e)}")
+        return Response(
+            {'error': 'Failed to fetch hospital analytics'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def hospital_occupancy_data(request):
+    """
+    Get real-time occupancy data for all hospitals
+    """
+    try:
+        from api.models.medical.patient_admission import PatientAdmission
+        
+        hospitals = Hospital.objects.all()
+        occupancy_data = []
+        
+        for hospital in hospitals:
+            # Get current admissions for this hospital
+            current_admissions = PatientAdmission.objects.filter(
+                hospital=hospital,
+                actual_discharge_date__isnull=True,
+                status='admitted'
+            ).count()
+            
+            # Calculate occupancy rate
+            if hospital.bed_capacity > 0:
+                occupancy_rate = (current_admissions / hospital.bed_capacity) * 100
+                occupancy_percentage = f"{occupancy_rate:.1f}%"
+            else:
+                occupancy_rate = 0
+                occupancy_percentage = "0%"
+            
+            occupancy_data.append({
+                'hospital_id': hospital.id,
+                'hospital_name': hospital.name,
+                'bed_capacity': hospital.bed_capacity,
+                'current_admissions': current_admissions,
+                'occupancy_rate': occupancy_rate,
+                'occupancy_percentage': occupancy_percentage,
+                'is_verified': hospital.is_verified
+            })
+        
+        return Response({
+            'hospitals': occupancy_data,
+            'total_hospitals': len(occupancy_data),
+            'timestamp': timezone.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Error fetching hospital occupancy data: {str(e)}")
+        return Response(
+            {'error': 'Failed to fetch hospital occupancy data'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def hospital_licenses_data(request):
+    """
+    Get license information for all hospitals
+    """
+    try:
+        from api.models.medical.hospital_license import HospitalLicense
+        
+        hospitals = Hospital.objects.all()
+        license_data = []
+        
+        for hospital in hospitals:
+            # Get all licenses for this hospital
+            licenses = HospitalLicense.objects.filter(hospital=hospital)
+            
+            # Count licenses by status
+            active_licenses = licenses.filter(license_status='active').count()
+            pending_licenses = licenses.filter(license_status='pending').count()
+            total_licenses = licenses.count()
+            
+            # Create license summary
+            if total_licenses == 0:
+                license_summary = "No licenses"
+            elif active_licenses > 0:
+                license_summary = f"{active_licenses} Active"
+                if pending_licenses > 0:
+                    license_summary += f", {pending_licenses} Pending"
+            else:
+                license_summary = f"{pending_licenses} Pending"
+            
+            # Get license details
+            license_details = []
+            for license in licenses:
+                license_details.append({
+                    'id': license.id,
+                    'license_type': license.license_type,
+                    'license_name': license.license_name,
+                    'license_number': license.license_number,
+                    'license_category': license.license_category if hasattr(license, 'license_category') else None,
+                    'status': license.license_status,
+                    'issue_date': license.issue_date.isoformat() if license.issue_date else None,
+                    'effective_date': license.effective_date.isoformat() if license.effective_date else None,
+                    'expiration_date': license.expiration_date.isoformat() if license.expiration_date else None,
+                    'license_certificate': request.build_absolute_uri(license.license_certificate.url) if license.license_certificate else None,
+                    'healthcare_authority': {
+                        'id': license.healthcare_authority.id,
+                        'name': license.healthcare_authority.name
+                    } if license.healthcare_authority else None
+                })
+            
+            license_data.append({
+                'hospital_id': hospital.id,
+                'hospital_name': hospital.name,
+                'total_licenses': total_licenses,
+                'active_licenses': active_licenses,
+                'pending_licenses': pending_licenses,
+                'license_summary': license_summary,
+                'license_details': license_details
+            })
+        
+        return Response({
+            'hospitals': license_data,
+            'total_hospitals': len(license_data),
+            'timestamp': timezone.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"❌ Error fetching hospital license data: {str(e)}")
+        return Response(
+            {'error': 'Failed to fetch hospital license data'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def add_hospital_license(request, hospital_id):
+    """
+    Add a new license to a hospital.
+    Admin only endpoint.
+
+    POST /api/hospitals/{hospital_id}/licenses/add/
+
+    Request body:
+    {
+        "license_number": "NG-HOS-2025-001",
+        "license_type": "operating",
+        "license_name": "Hospital Operating License",
+        "license_category": "General Medical Services",
+        "license_status": "active",
+        "issue_date": "2025-01-01",
+        "effective_date": "2025-01-01",
+        "expiration_date": "2030-01-01",
+        "healthcare_authority_id": 1,
+        "license_certificate": <file>,  // Optional file upload
+        "conditions": "...",
+        "limitations": "...",
+        "notes": "..."
+    }
+    """
+    try:
+        from api.models.medical.hospital_license import HospitalLicense
+        from api.models.medical.healthcare_authority import HealthcareAuthority
+        from datetime import datetime
+
+        # Get hospital
+        hospital = get_object_or_404(Hospital, id=hospital_id)
+
+        # Get request data
+        data = request.data.copy()
+
+        # Validate required fields
+        required_fields = ['license_number', 'license_type', 'license_name',
+                          'issue_date', 'effective_date', 'healthcare_authority_id']
+        missing_fields = [field for field in required_fields if field not in data]
+
+        if missing_fields:
+            return Response({
+                'error': f'Missing required fields: {", ".join(missing_fields)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get healthcare authority
+        try:
+            authority = HealthcareAuthority.objects.get(id=data['healthcare_authority_id'])
+        except HealthcareAuthority.DoesNotExist:
+            return Response({
+                'error': 'Healthcare authority not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Handle file upload
+        license_certificate = request.FILES.get('license_certificate')
+
+        # Parse dates from strings
+        def parse_date(date_string):
+            if not date_string:
+                return None
+            try:
+                return datetime.strptime(date_string, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                return None
+
+        issue_date = parse_date(data.get('issue_date'))
+        effective_date = parse_date(data.get('effective_date'))
+        expiration_date = parse_date(data.get('expiration_date'))
+
+        # Create license
+        license = HospitalLicense.objects.create(
+            hospital=hospital,
+            healthcare_authority=authority,
+            license_number=data['license_number'],
+            license_type=data.get('license_type', 'operating'),
+            license_category=data.get('license_category', ''),
+            license_name=data['license_name'],
+            license_status=data.get('license_status', 'active'),
+            issue_date=issue_date,
+            effective_date=effective_date,
+            expiration_date=expiration_date,
+            license_certificate=license_certificate,
+            conditions=data.get('conditions', ''),
+            limitations=data.get('limitations', ''),
+            notes=data.get('notes', ''),
+            bed_capacity_authorized=data.get('bed_capacity_authorized'),
+            license_fee_paid=data.get('license_fee_paid'),
+            renewal_fee=data.get('renewal_fee'),
+            currency=data.get('currency', 'NGN'),
+            created_by=request.user,
+            last_modified_by=request.user
+        )
+
+        logger.info(f"✅ License {license.license_number} added to hospital {hospital.name} by admin {request.user.email}")
+
+        return Response({
+            'success': True,
+            'message': 'License added successfully',
+            'license': {
+                'id': license.id,
+                'license_number': license.license_number,
+                'license_type': license.license_type,
+                'license_name': license.license_name,
+                'status': license.license_status,
+                'issue_date': license.issue_date.isoformat(),
+                'expiration_date': license.expiration_date.isoformat() if license.expiration_date else None
+            }
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        logger.error(f"❌ Error adding hospital license: {str(e)}")
+        logger.error(traceback.format_exc())
+        return Response({
+            'error': f'Failed to add license: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['PUT'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def update_hospital_license(request, hospital_id, license_id):
+    """
+    Update an existing hospital license.
+    Admin only endpoint.
+    """
+    try:
+        from api.models.medical.hospital_license import HospitalLicense
+
+        hospital = get_object_or_404(Hospital, id=hospital_id)
+        license = get_object_or_404(HospitalLicense, id=license_id, hospital=hospital)
+
+        data = request.data.copy()
+
+        # Update fields
+        updatable_fields = ['license_name', 'license_status', 'license_category',
+                           'expiration_date', 'conditions', 'limitations', 'notes',
+                           'bed_capacity_authorized', 'license_fee_paid', 'renewal_fee']
+
+        for field in updatable_fields:
+            if field in data:
+                setattr(license, field, data[field])
+
+        # Handle file upload
+        if 'license_certificate' in request.FILES:
+            license.license_certificate = request.FILES['license_certificate']
+
+        license.last_modified_by = request.user
+        license.save()
+
+        logger.info(f"✅ License {license.license_number} updated by admin {request.user.email}")
+
+        return Response({
+            'success': True,
+            'message': 'License updated successfully'
+        })
+
+    except Exception as e:
+        logger.error(f"❌ Error updating hospital license: {str(e)}")
+        return Response({
+            'error': f'Failed to update license: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated, IsAdminUser])
+def delete_hospital_license(request, hospital_id, license_id):
+    """
+    Delete a hospital license.
+    Admin only endpoint.
+    """
+    try:
+        from api.models.medical.hospital_license import HospitalLicense
+
+        hospital = get_object_or_404(Hospital, id=hospital_id)
+        license = get_object_or_404(HospitalLicense, id=license_id, hospital=hospital)
+
+        license_number = license.license_number
+        license.delete()
+
+        logger.info(f"✅ License {license_number} deleted by admin {request.user.email}")
+
+        return Response({
+            'success': True,
+            'message': 'License deleted successfully'
+        })
+
+    except Exception as e:
+        logger.error(f"❌ Error deleting hospital license: {str(e)}")
+        return Response({
+            'error': f'Failed to delete license: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ============================================================================
+# HOSPITAL ADMIN LICENSE MANAGEMENT ENDPOINTS
+# (For hospital admins to manage their own hospital's licenses)
+# ============================================================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_my_hospital_licenses(request):
+    """
+    Get all licenses for the hospital admin's hospital.
+
+    This endpoint allows hospital admins to view their own hospital's licenses.
+    """
+    try:
+        user = request.user
+
+        # Check if user is a hospital admin
+        from api.models.medical.hospital_auth import HospitalAdmin
+        try:
+            hospital_admin = HospitalAdmin.objects.get(user=user)
+            hospital = hospital_admin.hospital
+        except HospitalAdmin.DoesNotExist:
+            return Response({
+                'error': 'You are not a hospital administrator.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        # Get all licenses for this hospital
+        from api.models.medical.hospital_license import HospitalLicense
+        licenses = HospitalLicense.objects.filter(hospital=hospital).order_by('-created_at')
+
+        licenses_data = []
+        for license in licenses:
+            licenses_data.append({
+                'id': license.id,
+                'license_number': license.license_number,
+                'license_type': license.license_type,
+                'license_name': license.license_name,
+                'license_category': license.license_category or '',
+                'license_status': license.license_status,
+                'issue_date': license.issue_date.isoformat() if license.issue_date else None,
+                'effective_date': license.effective_date.isoformat() if license.effective_date else None,
+                'expiration_date': license.expiration_date.isoformat() if license.expiration_date else None,
+                'healthcare_authority': {
+                    'id': license.healthcare_authority.id if license.healthcare_authority else None,
+                    'name': license.healthcare_authority.name if license.healthcare_authority else None
+                } if license.healthcare_authority else None,
+                'license_certificate': request.build_absolute_uri(license.license_certificate.url) if license.license_certificate else None,
+                'conditions': license.conditions or '',
+                'limitations': license.limitations or '',
+                'notes': license.notes or '',
+                'created_at': license.created_at.isoformat() if hasattr(license, 'created_at') else None
+            })
+
+        return Response({
+            'success': True,
+            'hospital': {
+                'id': hospital.id,
+                'name': hospital.name,
+                'registration_number': hospital.registration_number,
+                'is_verified': hospital.is_verified
+            },
+            'licenses': licenses_data,
+            'total': licenses.count()
+        })
+
+    except Exception as e:
+        logger.error(f"❌ Error getting hospital licenses: {str(e)}")
+        return Response({
+            'error': f'Failed to get licenses: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def upload_my_hospital_license(request):
+    """
+    Upload a new license for the hospital admin's hospital.
+
+    Hospital admins can upload licenses for their own hospital.
+    """
+    try:
+        user = request.user
+
+        # Check if user is a hospital admin
+        from api.models.medical.hospital_auth import HospitalAdmin
+        try:
+            hospital_admin = HospitalAdmin.objects.get(user=user)
+            hospital = hospital_admin.hospital
+        except HospitalAdmin.DoesNotExist:
+            return Response({
+                'error': 'You are not a hospital administrator.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        from api.models.medical.hospital_license import HospitalLicense
+        from api.models.medical.healthcare_authority import HealthcareAuthority
+        from datetime import datetime
+
+        data = request.data.copy()
+
+        # Parse dates from strings
+        def parse_date(date_string):
+            if not date_string:
+                return None
+            try:
+                return datetime.strptime(date_string, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                return None
+
+        issue_date = parse_date(data.get('issue_date'))
+        effective_date = parse_date(data.get('effective_date'))
+        expiration_date = parse_date(data.get('expiration_date'))
+
+        # Get healthcare authority
+        authority_id = data.get('healthcare_authority_id')
+        authority = None
+        if authority_id:
+            try:
+                authority = HealthcareAuthority.objects.get(id=authority_id)
+            except HealthcareAuthority.DoesNotExist:
+                return Response({
+                    'error': f'Healthcare authority with ID {authority_id} not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if license already exists (for resubmission of rejected licenses)
+        license_number = data.get('license_number')
+        existing_license = HospitalLicense.objects.filter(
+            hospital=hospital,
+            license_number=license_number
+        ).first()
+
+        if existing_license:
+            # Update existing license (resubmission)
+            existing_license.healthcare_authority = authority
+            existing_license.license_type = data.get('license_type', 'operating')
+            existing_license.license_name = data.get('license_name')
+            existing_license.license_category = data.get('license_category', '')
+            existing_license.license_status = 'pending'  # Reset to pending for admin review
+            existing_license.issue_date = issue_date
+            existing_license.effective_date = effective_date
+            existing_license.expiration_date = expiration_date
+            existing_license.conditions = ''  # Clear rejection reason
+            existing_license.limitations = data.get('limitations', '')
+            existing_license.notes = data.get('notes', '')
+            existing_license.last_modified_by = user
+
+            # Update certificate if new file uploaded
+            if request.FILES.get('license_certificate'):
+                existing_license.license_certificate = request.FILES.get('license_certificate')
+
+            existing_license.save()
+            license = existing_license
+            logger.info(f"✅ License {license.license_number} resubmitted by hospital admin {user.email} for {hospital.name}")
+        else:
+            # Create new license
+            license = HospitalLicense.objects.create(
+                hospital=hospital,
+                healthcare_authority=authority,
+                license_number=license_number,
+                license_type=data.get('license_type', 'operating'),
+                license_name=data.get('license_name'),
+                license_category=data.get('license_category', ''),
+                license_status='pending',  # All new uploads start as pending
+                issue_date=issue_date,
+                effective_date=effective_date,
+                expiration_date=expiration_date,
+                license_certificate=request.FILES.get('license_certificate'),
+                conditions=data.get('conditions', ''),
+                limitations=data.get('limitations', ''),
+                notes=data.get('notes', ''),
+                created_by=user,
+                last_modified_by=user
+            )
+            logger.info(f"✅ License {license.license_number} uploaded by hospital admin {user.email} for {hospital.name}")
+
+        return Response({
+            'success': True,
+            'message': 'License uploaded successfully',
+            'license': {
+                'id': license.id,
+                'license_number': license.license_number,
+                'license_name': license.license_name,
+                'license_type': license.license_type,
+                'license_status': license.license_status
+            }
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        logger.error(f"❌ Error uploading hospital license: {str(e)}")
+        return Response({
+            'error': f'Failed to upload license: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -1843,6 +2544,9 @@ def accept_appointment(request, appointment_id):
     """
     Allows a doctor to accept a pending appointment.
     This will assign the doctor to the appointment and change the status to confirmed.
+    
+    Optional parameter:
+    - proposed_time: ISO 8601 datetime string for proposing a new time (for late/overdue appointments)
     """
     user = request.user
     
@@ -1855,6 +2559,33 @@ def accept_appointment(request, appointment_id):
             }, status=status.HTTP_403_FORBIDDEN)
         
         doctor = user.doctor_profile
+        
+        # Get optional proposed time from request
+        proposed_time_str = request.data.get('proposed_time')
+        proposed_time = None
+        
+        if proposed_time_str:
+            try:
+                # Parse the proposed time
+                from dateutil import parser
+                proposed_time = parser.isoparse(proposed_time_str)
+                
+                # Make it timezone aware if it isn't
+                if timezone.is_naive(proposed_time):
+                    proposed_time = timezone.make_aware(proposed_time)
+                    
+                # Validate proposed time is in the future
+                if proposed_time <= timezone.now():
+                    return Response({
+                        'status': 'error',
+                        'message': 'Proposed time must be in the future'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                    
+            except (ValueError, TypeError) as e:
+                return Response({
+                    'status': 'error',
+                    'message': f'Invalid proposed_time format. Use ISO 8601 format: {str(e)}'
+                }, status=status.HTTP_400_BAD_REQUEST)
         
         # Find the appointment
         try:
@@ -1886,9 +2617,11 @@ def accept_appointment(request, appointment_id):
                 'message': 'Only pending appointments can be accepted'
             }, status=status.HTTP_400_BAD_REQUEST)
         
+        # Use proposed time if provided, otherwise use original appointment time
+        check_time = proposed_time if proposed_time else appointment.appointment_date
+        
         # Check if doctor is available at the appointment time
-        appointment_date = appointment.appointment_date
-        day_name = appointment_date.strftime('%a')  # Get 3-letter day name
+        day_name = check_time.strftime('%a')  # Get 3-letter day name
         consultation_days = [d.strip() for d in doctor.consultation_days.split(',')]
         
         # Make the day check more flexible
@@ -1902,7 +2635,7 @@ def accept_appointment(request, appointment_id):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         # Check if time is within consultation hours
-        appointment_time = appointment_date.time()
+        appointment_time = check_time.time()
         
         # Skip time check if consultation hours are not set
         if doctor.consultation_hours_start is not None and doctor.consultation_hours_end is not None:
@@ -1913,15 +2646,15 @@ def accept_appointment(request, appointment_id):
                 }, status=status.HTTP_400_BAD_REQUEST)
         
         # Check for overlapping appointments
-        appointment_end = appointment_date + timezone.timedelta(minutes=doctor.appointment_duration)
+        appointment_end = check_time + timezone.timedelta(minutes=doctor.appointment_duration)
         
         overlapping = Appointment.objects.filter(
             doctor=doctor,
             status__in=['pending', 'confirmed', 'in_progress', 'scheduled', 'checking_in'],
-            appointment_date__date=appointment_date.date(),  # Only check appointments on the same day
-            appointment_date__gte=appointment_date - timezone.timedelta(minutes=doctor.appointment_duration),  # Start time is before or at the requested end time
+            appointment_date__date=check_time.date(),  # Only check appointments on the same day
+            appointment_date__gte=check_time - timezone.timedelta(minutes=doctor.appointment_duration),  # Start time is before or at the requested end time
             appointment_date__lt=appointment_end  # Start time is before the end of the requested slot
-        )
+        ).exclude(appointment_id=appointment_id)  # Exclude current appointment
         
         if overlapping.exists():
             return Response({
@@ -1931,12 +2664,71 @@ def accept_appointment(request, appointment_id):
         
         # Accept the appointment
         try:
+            # Store old time and proposed time for notifications
+            old_time = appointment.appointment_date if proposed_time else None
+            
+            # Approve the appointment with the doctor first (this changes status to confirmed)
             appointment.approve(doctor)
+            
+            # If a proposed time was provided, update the appointment time and notify patient
+            if proposed_time:
+                # Now update the appointment time after approval
+                appointment.appointment_date = proposed_time
+                appointment.save()
+                
+                # Create notification for patient about the time change
+                try:
+                    from api.models.medical.appointment_notification import AppointmentNotification
+                    
+                    AppointmentNotification.objects.create(
+                        appointment=appointment,
+                        notification_type='email',
+                        event_type='appointment_time_proposed',
+                        recipient=appointment.patient,
+                        subject=f'Appointment Time Changed - {appointment.appointment_id}',
+                        message=(
+                            f'Dear {appointment.patient.get_full_name()},\n\n'
+                            f'Dr. {doctor.user.get_full_name()} has accepted your appointment and proposed a new time.\n\n'
+                            f'Original Time: {old_time.strftime("%B %d, %Y at %I:%M %p")}\n'
+                            f'New Proposed Time: {proposed_time.strftime("%B %d, %Y at %I:%M %p")}\n\n'
+                            f'Hospital: {appointment.hospital.name}\n'
+                            f'Department: {appointment.department.name}\n'
+                            f'Doctor: Dr. {doctor.user.get_full_name()} ({doctor.specialization})\n\n'
+                            f'The appointment has been confirmed with the new time. If you cannot make it at the new time, '
+                            f'please contact the hospital to reschedule.\n\n'
+                            f'Appointment ID: {appointment.appointment_id}\n\n'
+                            f'Best regards,\n'
+                            f'{appointment.hospital.name}'
+                        ),
+                        template_name='appointment_time_proposed'
+                    )
+                    
+                    # SMS notification if phone available
+                    if appointment.patient.phone:
+                        AppointmentNotification.objects.create(
+                            appointment=appointment,
+                            notification_type='sms',
+                            event_type='appointment_time_proposed',
+                            recipient=appointment.patient,
+                            subject=f'Appointment Time Changed',
+                            message=(
+                                f'Your appointment at {appointment.hospital.name} has been rescheduled to '
+                                f'{proposed_time.strftime("%b %d at %I:%M %p")} by Dr. {doctor.user.get_full_name()}. '
+                                f'ID: {appointment.appointment_id}'
+                            )
+                        )
+                except Exception as notif_error:
+                    logger.warning(f'Failed to send time proposal notification: {str(notif_error)}')
+            
+            message = f'Successfully accepted appointment {appointment_id}'
+            if proposed_time:
+                message += f' with new time: {proposed_time.strftime("%B %d, %Y at %I:%M %p")}'
             
             return Response({
                 'status': 'success',
-                'message': f'Successfully accepted appointment {appointment_id}',
-                'appointment': AppointmentListSerializer(appointment).data
+                'message': message,
+                'appointment': AppointmentListSerializer(appointment).data,
+                'time_changed': proposed_time is not None
             })
         except Exception as e:
             return Response({
@@ -1962,7 +2754,7 @@ def start_consultation(request, appointment_id):
     This will change the status from confirmed to in_progress.
     """
     user = request.user
-    
+
     try:
         # Check if user has a doctor profile
         if not hasattr(user, 'doctor_profile'):
@@ -1970,9 +2762,9 @@ def start_consultation(request, appointment_id):
                 'status': 'error',
                 'message': 'You are not registered as a doctor in the system'
             }, status=status.HTTP_403_FORBIDDEN)
-        
+
         doctor = user.doctor_profile
-        
+
         # Find the appointment
         try:
             appointment = Appointment.objects.get(appointment_id=appointment_id)
@@ -1981,96 +2773,93 @@ def start_consultation(request, appointment_id):
                 'status': 'error',
                 'message': f'Appointment with ID {appointment_id} not found'
             }, status=status.HTTP_404_NOT_FOUND)
-        
+
         # Check if the doctor is assigned to this appointment
         if appointment.doctor != doctor:
             return Response({
                 'status': 'error',
-                'message': 'You can only mark appointments as no-show for appointments assigned to you'
+                'message': 'You can only start consultations for appointments assigned to you'
             }, status=status.HTTP_403_FORBIDDEN)
-        
-        # Check if appointment can be marked as no-show
-        if appointment.status != 'confirmed':
+
+        # Check if appointment can be started
+        if appointment.status not in ['confirmed', 'pending']:
             return Response({
                 'status': 'error',
-                'message': f'Cannot mark appointment with status {appointment.status} as no-show. Only confirmed appointments can be marked as no-show.'
+                'message': f'Cannot start consultation for appointment with status {appointment.status}. Only confirmed or pending appointments can be started.'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Get no-show notes
-        no_show_notes = request.data.get('no_show_notes', '')
-        
-        # Update appointment status
+
+        # Update appointment status to in_progress
         try:
             # Use direct SQL update to avoid validation issues
             from django.db import connection
             with connection.cursor() as cursor:
-                # Update appointment status and no-show details
                 timestamp = timezone.now()
                 cursor.execute(
                     """
-                    UPDATE api_appointment 
-                    SET status = 'no_show', 
-                        notes = CONCAT(COALESCE(notes, ''), %s)
+                    UPDATE api_appointment
+                    SET status = 'in_progress',
+                        started_at = %s
                     WHERE appointment_id = %s
                     """,
-                    [f"\n\nNo-Show ({timestamp.strftime('%Y-%m-%d %H:%M')}) - Dr. {doctor.user.get_full_name()}:\nPatient did not show up for appointment. {no_show_notes}", appointment_id]
+                    [timestamp, appointment_id]
                 )
-                print(f"Appointment {appointment_id} marked as no-show successfully")
-            
+                print(f"Consultation started for appointment {appointment_id} at {timestamp}")
+
             # Refresh appointment from database
             appointment.refresh_from_db()
-            
-            # Send no-show notification to the patient
+
+            # Send consultation started notification to the patient
             try:
                 # Create email notification
                 AppointmentNotification.objects.create(
                     appointment=appointment,
                     notification_type='email',
-                    event_type='appointment_no_show',
+                    event_type='appointment_in_progress',
                     recipient=appointment.patient,
-                    subject=f"Appointment No-Show - {appointment.appointment_id}",
+                    subject=f"Consultation Started - {appointment.appointment_id}",
                     message=(
                         f"Dear {appointment.patient.get_full_name()},\n\n"
-                        f"You were marked as no-show for your appointment ({appointment.appointment_id}) "
-                        f"scheduled for {appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p')}.\n\n"
-                        f"Please contact us to reschedule or if this was in error."
+                        f"Your consultation for appointment ({appointment.appointment_id}) "
+                        f"scheduled for {appointment.appointment_date.strftime('%B %d, %Y at %I:%M %p')} "
+                        f"has started with Dr. {doctor.user.get_full_name()}.\n\n"
+                        f"Thank you for your patience."
                     ),
-                    template_name='appointment_no_show'
+                    template_name='appointment_in_progress'
                 )
-                
+
                 # Create SMS notification if patient has phone number
                 if appointment.patient.phone:
                     AppointmentNotification.objects.create(
                         appointment=appointment,
                         notification_type='sms',
-                        event_type='appointment_no_show',
+                        event_type='appointment_in_progress',
                         recipient=appointment.patient,
-                        subject=f"No-Show: {appointment.appointment_id}",
+                        subject=f"Consultation Started: {appointment.appointment_id}",
                         message=(
-                            f"You were marked as no-show for your appointment on {appointment.appointment_date.strftime('%b %d')}. "
-                            f"Please contact us to reschedule."
+                            f"Your consultation with Dr. {doctor.user.get_full_name()} "
+                            f"has started for appointment on {appointment.appointment_date.strftime('%b %d')}."
                         )
                     )
             except Exception as e:
-                print(f"Error sending no-show notifications: {str(e)}")
+                print(f"Error sending consultation started notifications: {str(e)}")
                 # Continue even if notification fails
-            
+
             return Response({
                 'status': 'success',
-                'message': f'Appointment {appointment_id} marked as no-show successfully',
+                'message': f'Consultation started for appointment {appointment_id}',
                 'appointment': AppointmentListSerializer(appointment).data
             })
-            
+
         except Exception as e:
-            print(f"Error marking appointment as no-show: {str(e)}")
+            print(f"Error starting consultation: {str(e)}")
             return Response({
                 'status': 'error',
-                'message': f'Error marking appointment as no-show: {str(e)}'
+                'message': f'Error starting consultation: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
+
     except Exception as e:
         import traceback
-        error_msg = f"Error processing no-show: {str(e)}\n{traceback.format_exc()}"
+        error_msg = f"Error processing consultation start: {str(e)}\n{traceback.format_exc()}"
         print(error_msg)
         logger.error(error_msg)
         return Response({
@@ -2975,12 +3764,23 @@ def create_prescription(request, appointment_id=None):
             if 'end_date' in med_data:
                 end_date = datetime.strptime(med_data['end_date'], '%Y-%m-%d').date()
             
+            # Handle nominated pharmacy if provided
+            nominated_pharmacy_id = med_data.get('nominated_pharmacy_id')
+            nominated_pharmacy = None
+            if nominated_pharmacy_id:
+                try:
+                    from api.models import Pharmacy
+                    nominated_pharmacy = Pharmacy.objects.get(id=nominated_pharmacy_id)
+                except Pharmacy.DoesNotExist:
+                    pass  # Will auto-assign from patient's nomination in save()
+
             # Create the medication
             medication = Medication.objects.create(
                 medical_record=medical_record,
                 catalog_entry=catalog_entry,
                 prescribed_by=doctor,
                 appointment=appointment,  # Store the appointment reference
+                nominated_pharmacy=nominated_pharmacy,  # Will auto-assign if None
                 medication_name=med_data['medication_name'],
                 generic_name=med_data.get('generic_name', ''),
                 strength=med_data['strength'],
@@ -3506,5 +4306,240 @@ def create_department(request):
             'status': 'error',
             'message': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_hospital(request):
+    """
+    Create a new comprehensive hospital based on HOSPITAL_CREATION_COMPREHENSIVE_JSON.md
+    
+    This endpoint creates hospitals with comprehensive information including:
+    - Basic information (name, address, contact details)
+    - Operational details (bed capacity, units, services)
+    - Staff requirements and medical director
+    - Contact information for various roles
+    - Digital capabilities
+    - Financial information
+    - Licensing and compliance data
+    """
+    try:
+        # Check if user has permission to create hospitals
+        user = request.user
+        if not user.is_staff and user.role not in ['platform_admin', 'system_admin']:
+            return Response({
+                'status': 'error',
+                'message': 'You do not have permission to create hospitals. Only platform administrators can register new hospitals.'
+            }, status=status.HTTP_403_FORBIDDEN)
         
+        # Create serializer with request context for user access
+        serializer = ComprehensiveHospitalCreationSerializer(
+            data=request.data, 
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            # Create the hospital
+            hospital = serializer.save()
+
+            # Log the hospital creation
+            logger.info(f"🏥 New hospital created: {hospital.name} (ID: {hospital.id}) by {user.email}")
+
+            # NOTE: Hospital admin account is automatically created by the post_save signal
+            # in api/signals/hospital_signals.py - no need to create it manually here.
+            # The signal will:
+            # 1. Generate secure credentials
+            # 2. Create the admin user and HospitalAdmin profile
+            # 3. Send welcome email with login credentials
+            # 4. Link the user to the hospital
+
+            # NOTE: PHB Professional Certificate is NOT sent here anymore
+            # It will only be sent after admin reviews and approves the hospital
+            # with all required licenses and documents
+
+            # Return success response with hospital details
+            response_data = {
+                'status': 'success',
+                'message': f'Hospital "{hospital.name}" has been successfully registered!',
+                'hospital': {
+                    'id': hospital.id,
+                    'name': hospital.name,
+                    'registration_number': hospital.registration_number,
+                    'hospital_type': hospital.hospital_type,
+                    'address': hospital.address,
+                    'city': hospital.city,
+                    'state': hospital.state,
+                    'country': hospital.country,
+                    'phone': hospital.phone,
+                    'email': hospital.email,
+                    'website': hospital.website,
+                    'bed_capacity': hospital.bed_capacity,
+                    'emergency_unit': hospital.emergency_unit,
+                    'icu_unit': hospital.icu_unit,
+                    'is_verified': hospital.is_verified,
+                    'created_at': hospital.created_at.isoformat() if hasattr(hospital, 'created_at') else None
+                },
+                'next_steps': [
+                    'Hospital has been created with pending verification status',
+                    'Government licenses can be added through the licensing system',
+                    'Quality certifications can be applied for separately',
+                    'Insurance relationships can be established through the provider network',
+                    'Staff can be assigned and departments can be created',
+                    'Hospital admin accounts can be created for management access'
+                ]
+            }
             
+            return Response(response_data, status=status.HTTP_201_CREATED)
+            
+        else:
+            # Return validation errors
+            return Response({
+                'status': 'error',
+                'message': 'Hospital registration failed due to validation errors.',
+                'errors': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+    except Exception as e:
+        # Log the error
+        logger.error(f"❌ Error creating hospital: {str(e)}")
+        logger.error(f"Request data: {request.data}")
+        
+        return Response({
+            'status': 'error',
+            'message': f'An unexpected error occurred while creating the hospital: {str(e)}',
+            'details': 'Please check your input data and try again. Contact support if the problem persists.'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def approve_hospital(request, hospital_id):
+    """
+    Approve a hospital after reviewing licenses and documents.
+
+    This endpoint:
+    - Marks the hospital as verified
+    - Sets the verification date
+    - Sends the PHB Professional Certificate email
+
+    Only admins can approve hospitals.
+    """
+    try:
+        # Check if user has permission
+        user = request.user
+        if not user.is_staff and user.role not in ['platform_admin', 'system_admin']:
+            return Response({
+                'status': 'error',
+                'message': 'You do not have permission to approve hospitals. Only platform administrators can approve hospitals.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        # Get the hospital
+        hospital = get_object_or_404(Hospital, id=hospital_id)
+
+        # Check if already verified
+        if hospital.is_verified:
+            return Response({
+                'status': 'warning',
+                'message': f'{hospital.name} is already verified.',
+                'hospital': {
+                    'id': hospital.id,
+                    'name': hospital.name,
+                    'is_verified': hospital.is_verified,
+                    'verification_date': hospital.verification_date.isoformat() if hasattr(hospital, 'verification_date') and hospital.verification_date else None
+                }
+            }, status=status.HTTP_200_OK)
+
+        # Mark as verified
+        hospital.is_verified = True
+        if hasattr(hospital, 'verification_date'):
+            from datetime import date
+            hospital.verification_date = date.today()
+        hospital.save()
+
+        logger.info(f"✅ Hospital approved: {hospital.name} (ID: {hospital.id}) by {user.email}")
+
+        # Send PHB Professional Certificate email
+        try:
+            from api.utils.email import send_hospital_professional_certificate
+            email_sent = send_hospital_professional_certificate(hospital)
+            if email_sent:
+                logger.info(f"✅ PHB certificate email sent to {hospital.name}")
+            else:
+                logger.warning(f"⚠️ Failed to send PHB certificate email to {hospital.name}")
+        except Exception as email_error:
+            logger.error(f"❌ Error sending PHB certificate email: {str(email_error)}")
+            # Don't fail the approval if email fails
+
+        return Response({
+            'status': 'success',
+            'message': f'{hospital.name} has been approved and verified!',
+            'hospital': {
+                'id': hospital.id,
+                'name': hospital.name,
+                'registration_number': hospital.registration_number,
+                'is_verified': hospital.is_verified,
+                'verification_date': hospital.verification_date.isoformat() if hasattr(hospital, 'verification_date') and hospital.verification_date else None,
+                'email': hospital.email
+            }
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"❌ Error approving hospital: {str(e)}")
+        return Response({
+            'status': 'error',
+            'message': f'An unexpected error occurred while approving the hospital: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def reject_hospital(request, hospital_id):
+    """
+    Reject a hospital application.
+
+    This endpoint allows admin to reject a hospital with a reason.
+    The hospital can be deleted or marked as rejected.
+    """
+    try:
+        # Check if user has permission
+        user = request.user
+        if not user.is_staff and user.role not in ['platform_admin', 'system_admin']:
+            return Response({
+                'status': 'error',
+                'message': 'You do not have permission to reject hospitals.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        # Get the hospital
+        hospital = get_object_or_404(Hospital, id=hospital_id)
+
+        # Get rejection reason
+        reason = request.data.get('reason', 'No reason provided')
+
+        # Mark as not verified (or you could add a 'rejected' status field)
+        hospital.is_verified = False
+        hospital.save()
+
+        logger.info(f"❌ Hospital rejected: {hospital.name} (ID: {hospital.id}) by {user.email}. Reason: {reason}")
+
+        # TODO: Send rejection email to hospital
+        # For now, just log it
+
+        return Response({
+            'status': 'success',
+            'message': f'{hospital.name} has been rejected.',
+            'hospital': {
+                'id': hospital.id,
+                'name': hospital.name,
+                'is_verified': hospital.is_verified
+            },
+            'reason': reason
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        logger.error(f"❌ Error rejecting hospital: {str(e)}")
+        return Response({
+            'status': 'error',
+            'message': f'An unexpected error occurred while rejecting the hospital: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+

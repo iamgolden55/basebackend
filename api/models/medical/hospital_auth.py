@@ -72,6 +72,7 @@ class HospitalAdmin(models.Model):
                 consent_data_processing=user_data.get('consent_data_processing', False)
             )
             user.set_password(self.password)
+            user.hospital = self.hospital  # Link user to hospital for permission checks
             user.save()
             
             # Link the user

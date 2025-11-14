@@ -363,14 +363,74 @@ class Medication(TimestampedModel):
         related_name='medications',
         help_text="Appointment during which this medication was prescribed"
     )
-    
+
+    # Pharmacy Information
+    nominated_pharmacy = models.ForeignKey(
+        'api.Pharmacy',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='nominated_prescriptions',
+        help_text="Patient's nominated pharmacy for this prescription (auto-assigned from user's current nomination)"
+    )
+
     pharmacy_name = models.CharField(
         max_length=255,
         blank=True,
         null=True,
-        help_text="Dispensing pharmacy name"
+        help_text="Dispensing pharmacy name (legacy field - use nominated_pharmacy for structured data)"
     )
-    
+
+    # Security and Verification Fields
+    nonce = models.UUIDField(
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="One-time verification token for prescription security"
+    )
+    signature = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        help_text="HMAC-SHA256 signature for prescription verification"
+    )
+
+    # Dispensing Tracking
+    dispensed = models.BooleanField(
+        default=False,
+        help_text="Whether prescription has been dispensed/collected"
+    )
+    dispensed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Date and time prescription was dispensed"
+    )
+    dispensed_by_pharmacy = models.ForeignKey(
+        'api.Pharmacy',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='dispensed_prescriptions',
+        help_text="Pharmacy that dispensed the prescription"
+    )
+    dispensing_pharmacist_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Name of pharmacist who dispensed the medication"
+    )
+
+    # Controlled Substance Override
+    is_controlled_override = models.BooleanField(
+        default=False,
+        help_text="Doctor manually marked as controlled substance (even if not in drug database)"
+    )
+
+    verification_attempts = models.JSONField(
+        default=list,
+        help_text="Log of all verification attempts for audit trail"
+    )
+
     # Additional Clinical Information
     priority = models.IntegerField(
         default=3,
@@ -451,23 +511,55 @@ class Medication(TimestampedModel):
         return f"{self.medication_name} {self.strength} for {self.medical_record.hpn}"
     
     def save(self, *args, **kwargs):
+        # Generate nonce for new prescriptions (for security verification)
+        if not self.pk and not self.nonce:
+            import uuid
+            self.nonce = uuid.uuid4()
+
         # Set generic name from catalog if available and not set
         if self.catalog_entry and not self.generic_name:
             self.generic_name = self.catalog_entry.generic_name
-        
+
+        # Auto-assign patient's nominated pharmacy if not set (on creation only)
+        if not self.pk and not self.nominated_pharmacy:
+            try:
+                # Import here to avoid circular imports
+                from .pharmacy import NominatedPharmacy
+
+                # Get patient from medical record
+                patient = self.medical_record.user
+
+                # Get current nomination
+                current_nomination = NominatedPharmacy.objects.filter(
+                    user=patient,
+                    is_current=True
+                ).first()
+
+                # Assign nominated pharmacy if found
+                if current_nomination:
+                    self.nominated_pharmacy = current_nomination.pharmacy
+                    # Also update pharmacy_name for backward compatibility
+                    if not self.pharmacy_name:
+                        self.pharmacy_name = current_nomination.pharmacy.name
+            except Exception as e:
+                # Log but don't fail prescription creation if nomination lookup fails
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Could not auto-assign nominated pharmacy: {str(e)}")
+
         # Check if medication is discontinued
         if self.status == 'discontinued' and not self.discontinued_date:
             self.discontinued_date = timezone.now().date()
             self.is_ongoing = False
-        
+
         # Update ongoing status based on end date
         if self.end_date and self.end_date < timezone.now().date():
             self.is_ongoing = False
             if self.status == 'active':
                 self.status = 'completed'
-        
+
         super().save(*args, **kwargs)
-        
+
         # Update medical record medication count
         if hasattr(self.medical_record, 'update_complexity_metrics'):
             self.medical_record.update_complexity_metrics()

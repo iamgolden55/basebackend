@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PHB Hospital Certificate of Approval</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        @page {
+            size: A4 landscape;
+            margin: 0;
+        }
+        body {
+            font-family: 'Montserrat', Georgia, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f0f0;
+        }
+        .certificate-container {
+            width: 1000px;
+            height: 700px;
+            background-color: #fdfaf7;
+            border: 10px solid #1a5c3a;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 40px;
+            box-sizing: border-box;
+        }
+        .background-lines {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            opacity: 0.15;
+            z-index: 0;
+        }
+        .background-lines::before {
+            content: '';
+            position: absolute;
+            top: -20%;
+            left: -20%;
+            width: 140%;
+            height: 140%;
+            background:
+                radial-gradient(circle at 10% 80%, transparent 38%, #2d5f3d 40%, transparent 42%),
+                radial-gradient(circle at 90% 20%, transparent 38%, #2d5f3d 40%, transparent 42%);
+            background-size: 50% 50%;
+            transform: rotate(-15deg);
+        }
+        .background-lines::after {
+            content: '';
+            position: absolute;
+            top: -20%;
+            left: -20%;
+            width: 140%;
+            height: 140%;
+            background:
+                radial-gradient(circle at 20% 70%, transparent 38%, #2d5f3d 40%, transparent 42%),
+                radial-gradient(circle at 80% 30%, transparent 38%, #2d5f3d 40%, transparent 42%);
+            background-size: 50% 50%;
+            transform: rotate(5deg);
+        }
+        .content {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+        }
+        .org-header {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 11px;
+            color: #1a5c3a;
+            margin-bottom: 20px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+        .title {
+            font-family: 'Dancing Script', cursive;
+            font-size: 110px;
+            color: #1a5c3a;
+            margin-bottom: 5px;
+            line-height: 0.9;
+            font-weight: 700;
+        }
+        .subtitle {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 18px;
+            color: #666;
+            margin-bottom: 35px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            font-weight: 400;
+        }
+        .proudly-presented {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 14px;
+            color: #555;
+            margin-bottom: 12px;
+            font-style: italic;
+            font-weight: 400;
+        }
+        .name {
+            font-family: 'Dancing Script', cursive;
+            font-size: 62px;
+            color: #1a5c3a;
+            margin-bottom: 15px;
+            border-bottom: 1.5px solid #888;
+            padding-bottom: 8px;
+            display: inline-block;
+            max-width: 85%;
+            font-weight: 700;
+            line-height: 1.1;
+        }
+        .course-description {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 13px;
+            color: #555;
+            margin-bottom: 55px;
+            max-width: 750px;
+            margin-left: auto;
+            margin-right: auto;
+            line-height: 1.7;
+            font-weight: 400;
+        }
+        .signatures {
+            display: flex;
+            justify-content: space-around;
+            width: 90%;
+            margin: 45px auto 0 auto;
+            position: relative;
+        }
+        .signature-block {
+            flex: 1;
+            text-align: center;
+            padding: 0 20px;
+        }
+        .signature-line {
+            border-bottom: 1.5px solid #888;
+            width: 70%;
+            margin: 0 auto 8px auto;
+        }
+        .signer-name {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 12px;
+            color: #444;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .signer-title {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 11px;
+            color: #777;
+            font-weight: 400;
+        }
+        .seal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 130px;
+            height: 130px;
+            border-radius: 50%;
+            border: 3px dashed #1a5c3a;
+            background: linear-gradient(135deg, #e8f3ed 0%, #d4e8dc 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Montserrat', sans-serif;
+            font-size: 10px;
+            color: #1a5c3a;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            line-height: 1.3;
+            padding: 15px;
+            box-sizing: border-box;
+            z-index: 2;
+            transform: translate(-50%, -50%) rotate(-15deg);
+            margin-top: 120px;
+            font-weight: 700;
+        }
+        .seal-text {
+            transform: rotate(15deg);
+            text-align: center;
+        }
+        .cert-number {
+            position: absolute;
+            bottom: 22px;
+            right: 40px;
+            font-size: 8px;
+            color: #999;
+            text-align: right;
+            font-family: 'Montserrat', sans-serif;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="certificate-container">
+        <div class="background-lines"></div>
+
+        <div class="content">
+            <p class="org-header">Public Health Bureau - Federal Republic of Nigeria</p>
+            <h1 class="title">Certificate</h1>
+            <p class="subtitle">OF APPROVAL</p>
+
+            <p class="proudly-presented">proudly presented to</p>
+            <p class="name">{HOSPITAL_NAME}</p>
+            <p class="course-description">
+                In recognition of successfully completing the comprehensive registration and verification
+                process with the Public Health Bureau (PHB). This hospital has met all required standards
+                and is hereby authorized as a verified member of the PHB Healthcare Network, with full
+                access to the Electronic Health Records System, Electronic Prescription Service, and all
+                integrated healthcare platform services.
+            </p>
+
+            <div class="signatures">
+                <div class="signature-block">
+                    <div class="signature-line"></div>
+                    <p class="signer-name">PHB Administration</p>
+                    <p class="signer-title">authorized signature</p>
+                </div>
+
+                <div class="seal">
+                    <span class="seal-text">Verified<br>&amp;<br>Approved</span>
+                </div>
+
+                <div class="signature-block">
+                    <div class="signature-line"></div>
+                    <p class="signer-name">{DATE_UPPER}</p>
+                    <p class="signer-title">date of issue</p>
+                </div>
+            </div>
+
+            <div class="cert-number">
+                Certificate ID: {CERT_ID}<br/>
+                Registration: {REG_NUM} | Location: {LOCATION}<br/>
+                Verify at: https://phb.ng/verify/{REG_NUM}
+            </div>
+        </div>
+    </div>
+</body>
+</html>

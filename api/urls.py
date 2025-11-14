@@ -12,7 +12,11 @@ from api.views.auth.authentication import (
     VerifyMedicalRecordOTPView,
     UpdateOnboardingStatusView,
     ChangePasswordView,
+    LogoutView,
+    VerifyEmailToken,
 )
+from api.views.user_profile_view import UserProfileView
+from api.views.auth.token_refresh import CookieTokenRefreshView
 
 # Hospital admin auth views
 from api.views.auth.hospital_admin_auth import (
@@ -34,6 +38,16 @@ from api.views.hospital.hospital_views import (
     ApproveHospitalRegistrationView,
     HospitalAdminRegistrationView,
     hospital_list,
+    hospital_analytics,
+    hospital_occupancy_data,
+    hospital_licenses_data,
+    add_hospital_license,
+    update_hospital_license,
+    delete_hospital_license,
+    approve_hospital,
+    reject_hospital,
+    get_my_hospital_licenses,
+    upload_my_hospital_license,
     approve_registration,
     HospitalLocationViewSet,
     hospital_registration,
@@ -62,7 +76,8 @@ from api.views.hospital.hospital_views import (
     get_doctor_based_on_department,
     create_department,
     hospital_appointments,
-    check_appointment_conflict
+    check_appointment_conflict,
+    create_hospital
 )
 
 # Medical views
@@ -113,6 +128,59 @@ from api.views.womens_health_views import (
     womens_health_dashboard_data
 )
 
+# Pharmacy views
+from api.views.pharmacy_views import (
+    PharmacyListView,
+    PharmacyDetailView,
+    NominatedPharmacyView,
+    NominationHistoryView,
+    NearbyPharmaciesView,
+    create_pharmacy,
+    get_hospital_pharmacies,
+    update_pharmacy,
+    delete_pharmacy
+)
+
+# Pharmacy prescription views
+from api.views.pharmacy_prescription_views import (
+    get_prescriptions_by_hpn
+)
+
+# Prescription verification views
+from api.views.prescription_verification_views import (
+    verify_prescription_qr,
+    dispense_prescription,
+    regenerate_prescription_signature,
+    get_prescription_verification_log
+)
+
+# Prescription request views
+from api.views.prescription_requests_views import (
+    create_prescription_request,
+    get_prescription_requests,
+    get_doctor_prescription_requests,
+    get_prescription_request_details,
+    approve_prescription_request,
+    reject_prescription_request
+)
+
+# Pharmacist triage views
+from api.views.pharmacist_triage_views import (
+    get_assigned_prescription_requests,
+    get_prescription_request_detail,
+    approve_prescription_request as pharmacist_approve_prescription,
+    escalate_prescription_request,
+    reject_prescription_request as pharmacist_reject_prescription,
+    get_pharmacist_triage_statistics
+)
+
+# Stream Chat views
+from api.views.stream_chat import (
+    generate_stream_token,
+    get_hospital_users,
+    create_department_channel
+)
+
 # Agent views
 from api.views.agent_views import (
     # Analytics Agent endpoints
@@ -145,6 +213,13 @@ from api.views.agent_views import (
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
+# Drug Database views
+from api.views.drug_views import (
+    search_drugs,
+    get_drug_detail,
+    get_drug_statistics
+)
+
 # Clinical Guidelines views
 from api.views.medical.clinical_guidelines_views import (
     ClinicalGuidelineViewSet,
@@ -155,6 +230,12 @@ from api.views.medical.guideline_upload_views import (
     GuidelineFileUploadView,
     GuidelineFileUpdateView
 )
+
+# Messaging views
+from api.views import messaging
+
+# Practice page views
+from api.views import practice_page_views
 
 
 
@@ -242,6 +323,18 @@ urlpatterns = [
     
     # Other hospital endpoints
     path('hospitals/', hospital_list, name='hospital-list'),
+    path('hospitals/create/', create_hospital, name='hospital-create'),
+    path('hospitals/analytics/', hospital_analytics, name='hospital-analytics'),
+    path('hospitals/occupancy/', hospital_occupancy_data, name='hospital-occupancy'),
+    path('hospitals/licenses/', hospital_licenses_data, name='hospital-licenses'),
+    path('hospitals/<int:hospital_id>/licenses/add/', add_hospital_license, name='add-hospital-license'),
+    path('hospitals/<int:hospital_id>/licenses/<int:license_id>/update/', update_hospital_license, name='update-hospital-license'),
+    path('hospitals/<int:hospital_id>/licenses/<int:license_id>/delete/', delete_hospital_license, name='delete-hospital-license'),
+    path('hospitals/<int:hospital_id>/approve/', approve_hospital, name='approve-hospital'),
+    path('hospitals/<int:hospital_id>/reject/', reject_hospital, name='reject-hospital'),
+    # Hospital admin license management (for hospital admins to manage their own licenses)
+    path('my-hospital/licenses/', get_my_hospital_licenses, name='my-hospital-licenses'),
+    path('my-hospital/licenses/upload/', upload_my_hospital_license, name='upload-my-hospital-license'),
     path('hospitals/pending/<int:registration_id>/', approve_registration, name='approve-registration'),
     path('hospitals/pending-registrations/', 
          pending_hospital_registrations, 
@@ -256,11 +349,21 @@ urlpatterns = [
 
     # Now include router URLs - hospital router will handle /api/hospitals/<id>/ patterns
     path('', include(router.urls)),
-    path('profile/', UserProfileUpdateView.as_view(), name='profile-update'),
+
+    # Authentication endpoints
+    path('logout/', LogoutView.as_view(), name='logout'),
+    path('token/refresh/', CookieTokenRefreshView.as_view(), name='token-refresh-cookie'),
+
+    # Profile and password management
+    path('profile/', UserProfileView.as_view(), name='profile'),
     path('password/reset/', PasswordResetRequestView.as_view(), name='password-reset-request'),
     path('password/reset/confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
     path('password/change/', ChangePasswordView.as_view(), name='password-change'),
-    path('onboarding/update/', UpdateOnboardingStatusView.as_view(), 
+
+    # Email verification
+    path('email/verify/<uuid:email_verification_token>/', VerifyEmailToken.as_view(), name='verify-email'),
+
+    path('onboarding/update/', UpdateOnboardingStatusView.as_view(),
          name='update-onboarding-status'),
     
     # Has primary hospital endpoint -- This is the endpoint for the users to check if they have a primary hospital.
@@ -354,9 +457,51 @@ urlpatterns = [
     # Prescription endpoints
     path('appointments/<str:appointment_id>/prescriptions/', create_prescription, name='create-prescription'),
     path('appointments/<str:appointment_id>/prescriptions/view/', appointment_prescriptions, name='appointment-prescriptions'),
+
+    # Prescription request endpoints (patient prescription requests) - MUST come before generic prescription patterns
+    path('prescriptions/requests/', create_prescription_request, name='create-prescription-request'),
+    path('prescriptions/requests/history/', get_prescription_requests, name='get-prescription-requests'),
+
+    # Prescription verification endpoints (for pharmacy security) - MUST come before generic prescription patterns
+    path('prescriptions/verify/', verify_prescription_qr, name='verify-prescription-qr'),
+    path('prescriptions/dispense/', dispense_prescription, name='dispense-prescription'),
+    path('prescriptions/<int:prescription_id>/regenerate-signature/', regenerate_prescription_signature, name='regenerate-prescription-signature'),
+    path('prescriptions/<int:prescription_id>/verification-log/', get_prescription_verification_log, name='prescription-verification-log'),
+
+    # Pharmacist triage endpoints (clinical pharmacist prescription review) - MUST come BEFORE generic doctor prescription patterns
+    path('provider/prescriptions/triage/', get_assigned_prescription_requests, name='pharmacist-assigned-requests'),
+    path('provider/prescriptions/triage/stats/', get_pharmacist_triage_statistics, name='pharmacist-triage-stats'),
+    path('provider/prescriptions/triage/<str:request_id>/', get_prescription_request_detail, name='pharmacist-prescription-detail'),
+    path('provider/prescriptions/triage/<str:request_id>/approve/', pharmacist_approve_prescription, name='pharmacist-approve-prescription'),
+    path('provider/prescriptions/triage/<str:request_id>/escalate/', escalate_prescription_request, name='pharmacist-escalate-prescription'),
+    path('provider/prescriptions/triage/<str:request_id>/reject/', pharmacist_reject_prescription, name='pharmacist-reject-prescription'),
+
+    # Professional prescription endpoints (doctor prescription management) - Generic patterns come AFTER specific pharmacist patterns
+    path('provider/prescriptions/', get_doctor_prescription_requests, name='get-doctor-prescription-requests'),
+    path('provider/prescriptions/<str:request_id>/', get_prescription_request_details, name='get-prescription-request-details'),
+    path('provider/prescriptions/<str:request_id>/approve/', approve_prescription_request, name='approve-prescription-request'),
+    path('provider/prescriptions/<str:request_id>/reject/', reject_prescription_request, name='reject-prescription-request'),
+
+    # Generic prescription endpoints - MUST come last to avoid capturing specific paths
     path('prescriptions/', patient_prescriptions, name='patient-prescriptions'),
     path('prescriptions/<str:appointment_id>/', patient_prescriptions, name='patient-prescriptions-by-appointment'),
-    
+
+    # Pharmacy endpoints
+    path('pharmacies/', PharmacyListView.as_view(), name='pharmacy-list'),
+    path('pharmacies/nearby/', NearbyPharmaciesView.as_view(), name='nearby-pharmacies'),
+    path('pharmacies/nominated/', NominatedPharmacyView.as_view(), name='nominated-pharmacy'),
+    path('pharmacies/nomination-history/', NominationHistoryView.as_view(), name='nomination-history'),
+    path('pharmacies/<int:pk>/', PharmacyDetailView.as_view(), name='pharmacy-detail'),
+
+    # Pharmacy prescription access endpoints (authenticated pharmacists only)
+    path('pharmacy/prescriptions/search/', get_prescriptions_by_hpn, name='pharmacy-prescriptions-by-hpn'),
+
+    # Admin pharmacy management endpoints
+    path('pharmacies/create/', create_pharmacy, name='create-pharmacy'),
+    path('pharmacies/<int:pharmacy_id>/update/', update_pharmacy, name='update-pharmacy'),
+    path('pharmacies/<int:pharmacy_id>/delete/', delete_pharmacy, name='delete-pharmacy'),
+    path('hospitals/<int:hospital_id>/pharmacies/', get_hospital_pharmacies, name='hospital-pharmacies'),
+
     # Patient search endpoint
     path('patients/search/', search_patients, name='patient-search'),
     
@@ -384,6 +529,9 @@ urlpatterns = [
     
     # 🛡️ MEDICAL VAULT 3.0 - Secure file upload endpoints
     path('secure/', include('api.views.security.urls')),
+    
+    # 👑 PLATFORM ADMIN ENDPOINTS - Platform owner dashboard and management
+    path('admin/', include('api.views.admin.urls')),
 
     # Hospital appointments endpoint for admins
     path('hospitals/appointments/', hospital_appointments, name='hospital-appointments'),
@@ -461,6 +609,71 @@ urlpatterns = [
     path('agents/clinical/schedule-appointment/', schedule_medical_appointment, name='schedule_appointment'),
     path('agents/clinical/update-medical-history/', update_medical_history, name='update_medical_history'),
     path('agents/clinical/medical-history-summary/', get_medical_history_summary, name='medical_history_summary'),
+    
+    # 💬 MESSAGING ENDPOINTS - WhatsApp-style secure healthcare messaging  
+    path('messaging/', include([
+        # Conversation management
+        path('conversations/', messaging.get_conversations, name='get_conversations'),
+        path('conversations/create/', messaging.create_conversation, name='create_conversation'),
+        path('conversations/emergency/', messaging.create_emergency_conversation, name='create_emergency_conversation'),
+        path('conversations/<str:conversation_id>/participants/', messaging.get_conversation_participants, name='get_conversation_participants'),
+        
+        # Message management
+        path('conversations/<str:conversation_id>/messages/', messaging.get_messages, name='get_messages'),
+        path('conversations/<str:conversation_id>/send/', messaging.send_message, name='send_message'),
+        
+        # System information
+        path('storage/info/', messaging.get_storage_info, name='get_storage_info'),
+    ])),
+    
+    # ============= STREAM CHAT ENDPOINTS =============
+    # Stream Chat token generation and user management
+    path('stream-chat/', include([
+        path('token/', generate_stream_token, name='stream_chat_token'),
+        path('users/', get_hospital_users, name='stream_chat_users'),
+        path('channels/create/', create_department_channel, name='stream_chat_create_channel'),
+    ])),
+
+    # ============= PROFESSIONAL REGISTRY ENDPOINTS =============
+    # PHB National Professional Registry (separate microservice namespace)
+    # Nigerian healthcare professional licensing and credentialing
+    # Can be extracted to separate Django app/service in future
+    path('registry/', include('api.registry_urls')),
+
+    # ============= DRUG DATABASE ENDPOINTS =============
+    # Drug classification and search (505+ medications)
+    path('drugs/', include([
+        path('search/', search_drugs, name='search_drugs'),
+        path('statistics/', get_drug_statistics, name='drug_statistics'),
+        path('<uuid:drug_id>/', get_drug_detail, name='drug_detail'),
+    ])),
+
+    # ============= PROFESSIONAL PRACTICE PAGE ENDPOINTS =============
+    # Professional practice pages for approved healthcare professionals
+    path('practice-pages/', include([
+        # Public endpoints
+        path('', practice_page_views.public_practice_pages, name='public_practice_pages'),
+        
+        # Professional endpoints (requires authentication) - MUST come before <slug:slug>/
+        path('check-eligibility/', practice_page_views.check_eligibility, name='check_eligibility'),
+        path('create/', practice_page_views.create_practice_page, name='create_practice_page'),
+        path('my-page/', practice_page_views.my_practice_page, name='my_practice_page'),
+        path('my-page/preview/', practice_page_views.preview_my_practice_page, name='preview_my_practice_page'),
+        path('my-page/update/', practice_page_views.update_practice_page, name='update_practice_page'),
+        path('my-page/publish/', practice_page_views.toggle_publish, name='toggle_publish'),
+        path('my-page/analytics/', practice_page_views.page_analytics, name='page_analytics'),
+
+        # Patient endpoints (requires authentication)
+        path('nominatable-pharmacies/', practice_page_views.nominatable_pharmacies, name='nominatable_pharmacies'),
+
+        # Admin endpoints (requires admin authentication)
+        path('admin/pages/', practice_page_views.admin_list_pages, name='admin_list_pages'),
+        path('admin/pages/<uuid:page_id>/', practice_page_views.admin_page_detail, name='admin_page_detail'),
+        path('admin/pages/<uuid:page_id>/verify/', practice_page_views.admin_verify_page, name='admin_verify_page'),
+        
+        # Public detail view - MUST come last to avoid catching specific paths
+        path('<slug:slug>/', practice_page_views.public_practice_page_detail, name='public_practice_page_detail'),
+    ])),
 ]
 
 # Available endpoints:

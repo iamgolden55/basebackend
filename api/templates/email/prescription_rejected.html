@@ -1,0 +1,383 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<div class="email-container">
+    <div class="header">
+        <h1>Prescription Request - Action Required ⚠️</h1>
+    </div>
+
+    <div class="content">
+        <p>Hello {{ patient_name }},</p>
+
+        <p>We're writing to inform you that your prescription request (Ref: <strong>{{ request_reference }}</strong>) could not be approved at this time.</p>
+
+        <div class="rejection-summary">
+            <h3>Request Details</h3>
+            <div class="detail-row">
+                <span class="label">Reference Number:</span>
+                <span class="value">{{ request_reference }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Review Date:</span>
+                <span class="value">{{ review_date }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Reviewed By:</span>
+                <span class="value">{{ doctor_name }}</span>
+            </div>
+        </div>
+
+        <div class="reason-section">
+            <h3>Reason for Decision 📋</h3>
+            <div class="reason-box">
+                <p>{{ rejection_reason }}</p>
+            </div>
+        </div>
+
+        {% if requires_follow_up %}
+        <div class="follow-up-required">
+            <h3>⚠️ Follow-Up Appointment Required</h3>
+            <p>Your prescriber has indicated that a follow-up appointment is necessary before this prescription can be issued.</p>
+            <p><strong>What to do next:</strong></p>
+            <ul>
+                <li>Book an appointment with your GP practice as soon as possible</li>
+                <li>Mention your prescription request (Ref: {{ request_reference }}) when booking</li>
+                <li>Bring any relevant medical information to your appointment</li>
+            </ul>
+            <div class="cta-button">
+                <a href="{{ frontend_url }}/account/appointments/book" class="button">Book Appointment Now</a>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="requested-medications">
+            <h3>Requested Medications</h3>
+            <table class="medication-table">
+                <thead>
+                    <tr>
+                        <th>Medication</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for medication in medications %}
+                    <tr>
+                        <td>
+                            <strong>{{ medication.name }}</strong><br>
+                            <small>{{ medication.strength }} - {{ medication.form }}</small>
+                        </td>
+                        <td>
+                            {% if medication.approved %}
+                            <span class="status-badge status-approved">Approved</span>
+                            {% else %}
+                            <span class="status-badge status-declined">Declined</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% if has_partial_approval %}
+            <p class="note"><em>Note: Some medications in your request were approved. Please check your account for details.</em></p>
+            {% endif %}
+        </div>
+
+        <div class="next-steps">
+            <h3>What You Can Do 🎯</h3>
+            <ul>
+                <li><strong>Contact Your GP:</strong> Discuss the decision and explore alternative options</li>
+                {% if requires_follow_up %}
+                <li><strong>Book an Appointment:</strong> Schedule a consultation to review your prescription needs</li>
+                {% endif %}
+                <li><strong>Submit a New Request:</strong> If circumstances change, you can submit a new request</li>
+                <li><strong>Ask Questions:</strong> Contact your GP practice if you need clarification</li>
+            </ul>
+        </div>
+
+        <div class="alternative-options">
+            <h3>Alternative Options 💡</h3>
+            <p>Depending on your situation, you may wish to consider:</p>
+            <ul>
+                <li>Discussing alternative medications with your GP</li>
+                <li>Requesting a medication review appointment</li>
+                <li>Checking if over-the-counter alternatives are suitable</li>
+                <li>Exploring non-medication treatment options</li>
+            </ul>
+        </div>
+
+        <div class="urgent-notice">
+            <h3>⚠️ If This Is Urgent</h3>
+            <p>If you need urgent medical assistance:</p>
+            <ul>
+                <li><strong>For urgent but non-emergency concerns:</strong> Call NHS 111</li>
+                <li><strong>For emergencies:</strong> Call 999 or go to A&E</li>
+                <li><strong>To speak to your GP:</strong> Contact your practice directly</li>
+            </ul>
+        </div>
+
+        <div class="support-section">
+            <h3>Need Help? 🤝</h3>
+            <p>We understand this may be disappointing. Our care team is here to support you:</p>
+            <ul>
+                <li>Contact your GP practice for medical advice</li>
+                <li>Speak to a pharmacist for medication guidance</li>
+                <li>Use our online resources for health information</li>
+            </ul>
+        </div>
+
+        <div class="footer-note">
+            <p>This decision was made in your best interest based on current clinical guidelines and your medical history.</p>
+            <p>If you have questions about this decision, please contact your GP practice directly.</p>
+            <p>Take care, {{ patient_name }} 💙</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .email-container {
+        max-width: 600px;
+        margin: 0 auto;
+        font-family: Arial, sans-serif;
+    }
+
+    .header {
+        background-color: #ff9800;
+        color: white;
+        padding: 20px;
+        text-align: center;
+        border-radius: 5px 5px 0 0;
+    }
+
+    .header h1 {
+        color: white;
+        margin: 0;
+        font-size: 24px;
+    }
+
+    .content {
+        padding: 20px;
+        background-color: #ffffff;
+        border-radius: 0 0 5px 5px;
+    }
+
+    .rejection-summary {
+        background-color: #fff3e0;
+        padding: 20px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #ff9800;
+    }
+
+    .rejection-summary h3 {
+        margin-top: 0;
+        color: #e65100;
+    }
+
+    .detail-row {
+        margin: 10px 0;
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .label {
+        font-weight: bold;
+        color: #666;
+    }
+
+    .value {
+        color: #333;
+    }
+
+    .reason-section {
+        background-color: #e3f2fd;
+        padding: 20px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #2196f3;
+    }
+
+    .reason-section h3 {
+        margin-top: 0;
+        color: #1565c0;
+    }
+
+    .reason-box {
+        background-color: white;
+        padding: 15px;
+        border-radius: 5px;
+        border-left: 3px solid #64b5f6;
+        font-style: italic;
+    }
+
+    .follow-up-required {
+        background-color: #fff3cd;
+        padding: 20px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #ffc107;
+    }
+
+    .follow-up-required h3 {
+        margin-top: 0;
+        color: #f57c00;
+    }
+
+    .follow-up-required ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .requested-medications {
+        background-color: #f5f5f5;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .requested-medications h3 {
+        margin-top: 0;
+        color: #424242;
+    }
+
+    .medication-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+        background-color: white;
+    }
+
+    .medication-table th {
+        background-color: #757575;
+        color: white;
+        padding: 10px;
+        text-align: left;
+        font-weight: bold;
+    }
+
+    .medication-table td {
+        padding: 10px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: bold;
+    }
+
+    .status-approved {
+        background-color: #4caf50;
+        color: white;
+    }
+
+    .status-declined {
+        background-color: #f44336;
+        color: white;
+    }
+
+    .note {
+        margin-top: 10px;
+        color: #666;
+        font-size: 14px;
+    }
+
+    .next-steps {
+        background-color: #e8f5e9;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .next-steps h3 {
+        margin-top: 0;
+        color: #2e7d32;
+    }
+
+    .next-steps ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .alternative-options {
+        background-color: #f3e5f5;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .alternative-options h3 {
+        margin-top: 0;
+        color: #6a1b9a;
+    }
+
+    .alternative-options ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .urgent-notice {
+        background-color: #ffebee;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #f44336;
+    }
+
+    .urgent-notice h3 {
+        margin-top: 0;
+        color: #c62828;
+    }
+
+    .urgent-notice ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .support-section {
+        background-color: #e1f5fe;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .support-section h3 {
+        margin-top: 0;
+        color: #0277bd;
+    }
+
+    .support-section ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .cta-button {
+        text-align: center;
+        margin: 20px 0;
+    }
+
+    .button {
+        display: inline-block;
+        background-color: #ff9800;
+        color: white !important;
+        padding: 12px 24px;
+        text-decoration: none;
+        border-radius: 5px;
+        font-weight: bold;
+        font-size: 16px;
+    }
+
+    .button:hover {
+        background-color: #f57c00;
+    }
+
+    .footer-note {
+        border-top: 1px solid #eee;
+        margin-top: 20px;
+        padding-top: 20px;
+        color: #666;
+        text-align: center;
+    }
+</style>
+{% endblock %}

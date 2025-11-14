@@ -368,9 +368,95 @@ class UserDetailSerializer(serializers.ModelSerializer):
         fields = ['id', 'email', 'first_name', 'last_name', 'phone']
 
 class HospitalSerializer(serializers.ModelSerializer):
+    def to_internal_value(self, data):
+        """
+        Transform frontend field names to match backend field names.
+        Handles nested objects and field name variations.
+        """
+        # Create a mutable copy of the data
+        transformed_data = dict(data)
+
+        # Handle Medical Director nested object
+        if 'medical_director' in transformed_data and isinstance(transformed_data['medical_director'], dict):
+            md = transformed_data.pop('medical_director')
+            transformed_data['medical_director_name'] = md.get('name', '')
+            transformed_data['medical_director_license'] = md.get('license_number', '')  # Frontend uses license_number
+            transformed_data['medical_director_specialization'] = md.get('specialization', '')
+            transformed_data['medical_director_years_experience'] = md.get('years_experience', 0)
+
+        # Handle Primary Contact nested object
+        if 'primary_contact' in transformed_data and isinstance(transformed_data['primary_contact'], dict):
+            pc = transformed_data.pop('primary_contact')
+            transformed_data['primary_contact_name'] = pc.get('name', '')
+            transformed_data['primary_contact_title'] = pc.get('title', '')
+            transformed_data['primary_contact_phone'] = pc.get('phone', '')
+            transformed_data['primary_contact_email'] = pc.get('email', '')
+
+        # Handle Administrative Contact nested object
+        if 'administrative_contact' in transformed_data and isinstance(transformed_data['administrative_contact'], dict):
+            ac = transformed_data.pop('administrative_contact')
+            transformed_data['administrative_contact_name'] = ac.get('name', '')
+            transformed_data['administrative_contact_title'] = ac.get('title', '')
+            transformed_data['administrative_contact_phone'] = ac.get('phone', '')
+            transformed_data['administrative_contact_email'] = ac.get('email', '')
+
+        # Handle Financial Information nested object
+        if 'registration_fees_paid' in transformed_data and isinstance(transformed_data['registration_fees_paid'], dict):
+            fees = transformed_data.pop('registration_fees_paid')
+            transformed_data['government_license_fees'] = fees.get('government_licenses', 0)
+            transformed_data['certification_fees'] = fees.get('certification_applications', 0)
+            transformed_data['total_registration_fees'] = fees.get('total_paid', 0)
+
+        # Handle Staffing Requirements field name variations
+        if 'minimum_doctors' in transformed_data:
+            transformed_data['minimum_doctors_required'] = transformed_data.pop('minimum_doctors')
+        if 'minimum_nurses' in transformed_data:
+            transformed_data['minimum_nurses_required'] = transformed_data.pop('minimum_nurses')
+
+        # Handle Digital Infrastructure field name variations
+        # Frontend uses different names for these boolean fields
+        digital_field_mappings = {
+            'electronic_medical_records': 'has_electronic_medical_records',
+            'telemedicine_capabilities': 'has_telemedicine_capabilities',
+            'online_appointment_booking': 'has_online_appointment_booking',
+            'patient_portal': 'has_patient_portal',
+            'mobile_app': 'has_mobile_application',
+            'api_integration_ready': 'has_api_integration'
+        }
+
+        for frontend_name, backend_name in digital_field_mappings.items():
+            if frontend_name in transformed_data:
+                transformed_data[backend_name] = transformed_data.pop(frontend_name)
+
+        # Call the parent method with transformed data
+        return super().to_internal_value(transformed_data)
+
     class Meta:
         model = Hospital
-        fields = ['id', 'name']
+        fields = [
+            'id', 'name', 'is_verified', 'bed_capacity', 'hospital_type',
+            'city', 'state', 'country', 'address', 'phone', 'email',
+            'emergency_unit', 'icu_unit', 'website', 'registration_number',
+            'postal_code', 'latitude', 'longitude', 'emergency_contact',
+            'accreditation_status', 'accreditation_expiry', 'verification_date',
+            # Medical Director Information
+            'medical_director_name', 'medical_director_license',
+            'medical_director_specialization', 'medical_director_years_experience',
+            # Primary Contact Information
+            'primary_contact_name', 'primary_contact_title',
+            'primary_contact_phone', 'primary_contact_email',
+            # Administrative Contact Information
+            'administrative_contact_name', 'administrative_contact_title',
+            'administrative_contact_phone', 'administrative_contact_email',
+            # Financial Information
+            'government_license_fees', 'certification_fees', 'total_registration_fees',
+            # Staffing Requirements
+            'minimum_doctors_required', 'minimum_nurses_required',
+            # Digital Infrastructure & Capabilities
+            'has_hospital_information_system', 'has_electronic_medical_records',
+            'has_telemedicine_capabilities', 'has_api_integration',
+            'has_online_appointment_booking', 'has_patient_portal', 'has_mobile_application'
+        ]
 
 class HospitalRegistrationSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
@@ -557,6 +643,7 @@ class ExistingUserToAdminSerializer(serializers.Serializer):
         # Update user role
         user.role = 'hospital_admin'
         user.is_staff = True
+        user.hospital = validated_data['hospital']  # Link user to hospital for permission checks
         user.save()
         return admin
 
@@ -684,9 +771,9 @@ class AppointmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
         fields = [
-            'id', 
+            'id',
             'appointment_id',
-            'doctor', 
+            'doctor',
             'doctor_id',
             'doctor_full_name',
             'patient',
@@ -720,7 +807,10 @@ class AppointmentSerializer(serializers.ModelSerializer):
             'important_notes',
             'cancellation_reason',
             'created_at',
-            'updated_at'
+            'updated_at',
+            'started_at',
+            'cancelled_at',
+            'completed_at'
         ]
         read_only_fields = ['patient', 'appointment_id', 'created_at', 'updated_at']
     
@@ -955,6 +1045,9 @@ class AppointmentListSerializer(serializers.ModelSerializer):
     formatted_appointment_type = serializers.SerializerMethodField(read_only=True)
     formatted_priority = serializers.SerializerMethodField(read_only=True)
     patient_full_name = serializers.SerializerMethodField(read_only=True)
+    is_flagged_pending = serializers.SerializerMethodField(read_only=True)
+    is_past_scheduled_time = serializers.SerializerMethodField(read_only=True)
+    minutes_past_scheduled = serializers.SerializerMethodField(read_only=True)
     
     class Meta:
         model = Appointment
@@ -980,7 +1073,13 @@ class AppointmentListSerializer(serializers.ModelSerializer):
             'status_display',
             'chief_complaint',
             'created_at',
-            'patient_full_name'
+            'patient_full_name',
+            'is_flagged_pending',
+            'is_past_scheduled_time',
+            'minutes_past_scheduled',
+            'started_at',
+            'cancelled_at',
+            'completed_at'
         ]
     
     def get_status_display(self, obj):
@@ -1036,6 +1135,18 @@ class AppointmentListSerializer(serializers.ModelSerializer):
         if obj.patient:
             return f"{obj.patient.first_name} {obj.patient.last_name}" if obj.patient.first_name and obj.patient.last_name else obj.patient.first_name if obj.patient.first_name else obj.patient.last_name
         return None
+    
+    def get_is_flagged_pending(self, obj):
+        """Check if appointment is flagged as pending overdue"""
+        return obj.is_flagged_pending
+    
+    def get_is_past_scheduled_time(self, obj):
+        """Check if appointment is past its scheduled time"""
+        return obj.is_past_scheduled_time
+    
+    def get_minutes_past_scheduled(self, obj):
+        """Get how many minutes past the scheduled time"""
+        return obj.minutes_past_scheduled_time
 
 class AppointmentCancelSerializer(serializers.Serializer):
     cancellation_reason = serializers.CharField(required=True)
@@ -1147,7 +1258,7 @@ class MedicationSerializer(serializers.ModelSerializer):
     route = serializers.CharField(required=True)
     dosage = serializers.CharField(required=True)
     frequency = serializers.CharField(required=True)
-    start_date = serializers.DateField(required=False)  
+    start_date = serializers.DateField(required=False)
     end_date = serializers.DateField(required=False, allow_null=True)
     duration = serializers.CharField(required=False, allow_null=True)
     patient_instructions = serializers.CharField(required=False, allow_null=True)
@@ -1157,6 +1268,53 @@ class MedicationSerializer(serializers.ModelSerializer):
     pharmacy_name = serializers.CharField(required=False, allow_null=True)
     prescribed_by = DoctorSerializer(read_only=True)
 
+    # Pharmacy nomination fields
+    nominated_pharmacy = serializers.SerializerMethodField()
+    nominated_pharmacy_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
+
+    # Security fields for prescription verification
+    nonce = serializers.UUIDField(read_only=True)
+    signature = serializers.CharField(read_only=True, allow_null=True)
+    signed_prescription_data = serializers.SerializerMethodField()
+
+    # Dispensing status fields
+    dispensed = serializers.BooleanField(read_only=True)
+    dispensed_at = serializers.DateTimeField(read_only=True, allow_null=True)
+
+    def get_nominated_pharmacy(self, obj):
+        """Return nominated pharmacy data if available"""
+        if obj.nominated_pharmacy:
+            return {
+                'id': obj.nominated_pharmacy.id,
+                'phb_pharmacy_code': obj.nominated_pharmacy.phb_pharmacy_code,
+                'name': obj.nominated_pharmacy.name,
+                'address_line_1': obj.nominated_pharmacy.address_line_1,
+                'city': obj.nominated_pharmacy.city,
+                'postcode': obj.nominated_pharmacy.postcode,
+                'phone': obj.nominated_pharmacy.phone,
+                'electronic_prescriptions_enabled': obj.nominated_pharmacy.electronic_prescriptions_enabled,
+            }
+        return None
+
+    def get_signed_prescription_data(self, obj):
+        """
+        Generate signed prescription payload for QR code.
+        This ensures the frontend always gets the latest signature.
+        """
+        from api.utils.prescription_security import sign_prescription
+
+        try:
+            payload, signature = sign_prescription(obj)
+            return {
+                'payload': payload,
+                'signature': signature
+            }
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error generating prescription signature: {str(e)}")
+            return None
+
     class Meta:
         model = Medication
         fields = [
@@ -1164,9 +1322,15 @@ class MedicationSerializer(serializers.ModelSerializer):
             'dosage', 'frequency', 'start_date', 'end_date', 'is_ongoing',
             'duration', 'patient_instructions', 'pharmacy_instructions', 'indication',
             'prescription_number', 'refills_authorized', 'refills_remaining',
-            'status', 'pharmacy_name', 'priority', 'prescribed_by'
+            'status', 'pharmacy_name', 'nominated_pharmacy', 'nominated_pharmacy_id',
+            'priority', 'prescribed_by',
+            # Security and verification fields
+            'nonce', 'signature', 'signed_prescription_data',
+            'dispensed', 'dispensed_at'
         ]
-        read_only_fields = ['id', 'generic_name', 'prescription_number', 'refills_remaining', 'prescribed_by']
+        read_only_fields = ['id', 'generic_name', 'prescription_number', 'refills_remaining',
+                            'prescribed_by', 'nominated_pharmacy', 'nonce', 'signature',
+                            'signed_prescription_data', 'dispensed', 'dispensed_at']
 
 
 class PrescriptionSerializer(serializers.Serializer):
@@ -2073,3 +2237,511 @@ class ClinicalGuidelineStatsSerializer(serializers.Serializer):
     most_accessed = serializers.DictField()
     categories_count = serializers.DictField()
     recent_activities = serializers.ListField()
+
+
+class ComprehensiveHospitalCreationSerializer(serializers.ModelSerializer):
+    """
+    Comprehensive serializer for creating hospitals based on 
+    HOSPITAL_CREATION_COMPREHENSIVE_JSON.md documentation
+    """
+    # Basic Information (Required)
+    name = serializers.CharField(max_length=255, required=True)
+    address = serializers.CharField(max_length=500, required=True)
+    phone = serializers.CharField(max_length=20, required=True)
+    email = serializers.EmailField(required=True)
+    website = serializers.URLField(required=False, allow_blank=True)
+    
+    # Location Information (Optional but recommended)
+    city = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    state = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    country = serializers.CharField(max_length=100, default="Nigeria")
+    postal_code = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    latitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=False, allow_null=True)
+    longitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=False, allow_null=True)
+    
+    # Registration and Verification (Important)
+    registration_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    is_verified = serializers.BooleanField(default=False)
+    verification_date = serializers.DateField(required=False, allow_null=True)
+    
+    # Hospital Classification (Required)
+    hospital_type = serializers.ChoiceField(
+        choices=['public', 'private', 'specialist', 'teaching', 'clinic', 'research'],
+        default='private'
+    )
+    
+    # Operational Information (Required)
+    bed_capacity = serializers.IntegerField(min_value=1, required=True)
+    emergency_unit = serializers.BooleanField(default=True)
+    icu_unit = serializers.BooleanField(default=True)
+    
+    # Contact Information (Optional)
+    emergency_contact = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    
+    # Accreditation (Optional)
+    accreditation_status = serializers.BooleanField(default=False)
+    accreditation_expiry = serializers.DateField(required=False, allow_null=True)
+    
+    # Additional comprehensive fields for enhanced functionality (write_only for processing)
+    medical_director = serializers.JSONField(required=False, default=dict, write_only=True)
+    staff_requirements = serializers.JSONField(required=False, default=dict, write_only=True)
+    operational_requirements = serializers.JSONField(required=False, default=dict, write_only=True)
+    contact_information = serializers.JSONField(required=False, default=dict, write_only=True)
+    digital_capabilities = serializers.JSONField(required=False, default=dict, write_only=True)
+    financial_information = serializers.JSONField(required=False, default=dict, write_only=True)
+    government_licenses = serializers.JSONField(required=False, default=list, write_only=True)
+    quality_certifications = serializers.JSONField(required=False, default=list, write_only=True)
+    insurance_relationships = serializers.JSONField(required=False, default=list, write_only=True)
+    compliance_frameworks = serializers.JSONField(required=False, default=list, write_only=True)
+
+    # Frontend sends these at top-level, so we need to accept them
+    primary_contact = serializers.JSONField(required=False, default=dict, write_only=True)
+    administrative_contact = serializers.JSONField(required=False, default=dict, write_only=True)
+    registration_fees_paid = serializers.JSONField(required=False, default=dict, write_only=True)
+
+    # Frontend sends digital capabilities as individual boolean fields
+    electronic_medical_records = serializers.BooleanField(required=False, default=False, write_only=True)
+    telemedicine_capabilities = serializers.BooleanField(required=False, default=False, write_only=True)
+    online_appointment_booking = serializers.BooleanField(required=False, default=False, write_only=True)
+    patient_portal = serializers.BooleanField(required=False, default=False, write_only=True)
+    mobile_app = serializers.BooleanField(required=False, default=False, write_only=True)
+    api_integration_ready = serializers.BooleanField(required=False, default=False, write_only=True)
+
+    # Staffing requirements sent as top-level fields
+    minimum_doctors = serializers.IntegerField(required=False, default=10, write_only=True)
+    minimum_nurses = serializers.IntegerField(required=False, default=25, write_only=True)
+    
+    class Meta:
+        model = Hospital
+        fields = [
+            # Basic required fields
+            'name', 'address', 'phone', 'email', 'website',
+            # Location fields
+            'city', 'state', 'country', 'postal_code', 'latitude', 'longitude',
+            # Registration fields
+            'registration_number', 'is_verified', 'verification_date',
+            # Classification
+            'hospital_type',
+            # Operational
+            'bed_capacity', 'emergency_unit', 'icu_unit', 'emergency_contact',
+            # Accreditation
+            'accreditation_status', 'accreditation_expiry',
+            # Comprehensive JSON fields (write_only - accepted but not stored on Hospital model)
+            'medical_director', 'staff_requirements', 'operational_requirements',
+            'contact_information', 'digital_capabilities', 'financial_information',
+            'government_licenses', 'quality_certifications', 'insurance_relationships',
+            'compliance_frameworks',
+            # Top-level fields sent by frontend (write_only)
+            'primary_contact', 'administrative_contact', 'registration_fees_paid',
+            # Digital capability individual fields
+            'electronic_medical_records', 'telemedicine_capabilities',
+            'online_appointment_booking', 'patient_portal', 'mobile_app',
+            'api_integration_ready',
+            # Staffing fields
+            'minimum_doctors', 'minimum_nurses'
+        ]
+        
+    def validate_registration_number(self, value):
+        """Auto-generate registration number if not provided"""
+        if not value:
+            import datetime
+            year = datetime.datetime.now().year
+            # Generate a simple registration number
+            return f"HOSP-NG-{year}-{Hospital.objects.count() + 1:03d}"
+        
+        # Check for uniqueness
+        if Hospital.objects.filter(registration_number=value).exists():
+            raise serializers.ValidationError("Registration number already exists.")
+        
+        return value
+        
+    def validate_email(self, value):
+        """Check for unique email"""
+        if Hospital.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A hospital with this email already exists.")
+        return value
+        
+    def validate_phone(self, value):
+        """Check for unique phone"""
+        if Hospital.objects.filter(phone=value).exists():
+            raise serializers.ValidationError("A hospital with this phone number already exists.")
+        return value
+        
+    def create(self, validated_data):
+        """Create hospital with comprehensive data"""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # DEBUG: Log incoming data structure
+        logger.info("=" * 80)
+        logger.info("HOSPITAL CREATION - INCOMING DATA")
+        logger.info("=" * 80)
+        logger.info(f"validated_data keys: {list(validated_data.keys())}")
+        logger.info(f"Full validated_data: {validated_data}")
+
+        # Extract write_only fields that don't belong on the Hospital model
+        comprehensive_data = {}
+        write_only_fields = [
+            'medical_director', 'staff_requirements', 'operational_requirements',
+            'contact_information', 'digital_capabilities', 'financial_information',
+            'government_licenses', 'quality_certifications', 'insurance_relationships',
+            'compliance_frameworks'
+        ]
+
+        for field in write_only_fields:
+            if field in validated_data:
+                comprehensive_data[field] = validated_data.pop(field)
+
+        logger.info(f"Extracted comprehensive_data: {comprehensive_data}")
+
+        # Auto-generate registration number if not provided
+        if not validated_data.get('registration_number'):
+            validated_data['registration_number'] = self.validate_registration_number(None)
+
+        # Remove fields that don't exist on Hospital model
+        validated_data.pop('created_by', None)
+        validated_data.pop('status', None)
+
+        # Process Medical Director information (comes as nested object at top level)
+        if 'medical_director' in comprehensive_data and comprehensive_data['medical_director']:
+            md = comprehensive_data['medical_director']
+            validated_data['medical_director_name'] = md.get('name', '')
+            validated_data['medical_director_license'] = md.get('license_number', '')
+            validated_data['medical_director_specialization'] = md.get('specialization', '')
+            validated_data['medical_director_years_experience'] = md.get('years_experience', 0)
+
+        # Process Staffing Requirements (comes as top-level fields)
+        # Check both in comprehensive_data and in validated_data
+        if 'staff_requirements' in comprehensive_data and comprehensive_data['staff_requirements']:
+            staff = comprehensive_data['staff_requirements']
+            validated_data['minimum_doctors_required'] = staff.get('minimum_doctors', 10)
+            validated_data['minimum_nurses_required'] = staff.get('minimum_nurses', 25)
+        # Also check top-level for backward compatibility
+        if 'minimum_doctors' in validated_data:
+            validated_data['minimum_doctors_required'] = validated_data.pop('minimum_doctors', 10)
+        if 'minimum_nurses' in validated_data:
+            validated_data['minimum_nurses_required'] = validated_data.pop('minimum_nurses', 25)
+
+        # Process Contact Information (comes as top-level objects, NOT nested in contact_information)
+        if 'contact_information' in comprehensive_data and comprehensive_data['contact_information']:
+            contact = comprehensive_data['contact_information']
+            # Primary Contact nested inside contact_information
+            if 'primary_contact' in contact:
+                pc = contact['primary_contact']
+                validated_data['primary_contact_name'] = pc.get('name', '')
+                validated_data['primary_contact_title'] = pc.get('title', '')
+                validated_data['primary_contact_phone'] = pc.get('phone', '')
+                validated_data['primary_contact_email'] = pc.get('email', '')
+            # Administrative Contact nested inside contact_information
+            if 'administrative_contact' in contact:
+                ac = contact['administrative_contact']
+                validated_data['administrative_contact_name'] = ac.get('name', '')
+                validated_data['administrative_contact_title'] = ac.get('title', '')
+                validated_data['administrative_contact_phone'] = ac.get('phone', '')
+                validated_data['administrative_contact_email'] = ac.get('email', '')
+
+        # ALSO check if contacts are at top-level (frontend sends them here!)
+        if 'primary_contact' in validated_data and isinstance(validated_data['primary_contact'], dict):
+            pc = validated_data.pop('primary_contact')
+            validated_data['primary_contact_name'] = pc.get('name', '')
+            validated_data['primary_contact_title'] = pc.get('title', '')
+            validated_data['primary_contact_phone'] = pc.get('phone', '')
+            validated_data['primary_contact_email'] = pc.get('email', '')
+
+        if 'administrative_contact' in validated_data and isinstance(validated_data['administrative_contact'], dict):
+            ac = validated_data.pop('administrative_contact')
+            validated_data['administrative_contact_name'] = ac.get('name', '')
+            validated_data['administrative_contact_title'] = ac.get('title', '')
+            validated_data['administrative_contact_phone'] = ac.get('phone', '')
+            validated_data['administrative_contact_email'] = ac.get('email', '')
+
+        # Process Digital Capabilities (frontend sends these at TOP LEVEL, not nested!)
+        # Check validated_data FIRST because frontend sends them there
+        if 'has_hospital_information_system' in validated_data:
+            pass  # Already at top level, keep it
+        if 'electronic_medical_records' in validated_data:
+            validated_data['has_electronic_medical_records'] = validated_data.pop('electronic_medical_records')
+        if 'telemedicine_capabilities' in validated_data:
+            validated_data['has_telemedicine_capabilities'] = validated_data.pop('telemedicine_capabilities')
+        if 'online_appointment_booking' in validated_data:
+            validated_data['has_online_appointment_booking'] = validated_data.pop('online_appointment_booking')
+        if 'patient_portal' in validated_data:
+            validated_data['has_patient_portal'] = validated_data.pop('patient_portal')
+        if 'mobile_app' in validated_data:
+            validated_data['has_mobile_application'] = validated_data.pop('mobile_app')
+        if 'api_integration_ready' in validated_data:
+            validated_data['has_api_integration'] = validated_data.pop('api_integration_ready')
+
+        # Also check in digital_capabilities comprehensive_data
+        if 'digital_capabilities' in comprehensive_data and comprehensive_data['digital_capabilities']:
+            digital = comprehensive_data['digital_capabilities']
+            validated_data['has_hospital_information_system'] = digital.get('has_hospital_information_system', validated_data.get('has_hospital_information_system', False))
+            validated_data['has_electronic_medical_records'] = digital.get('electronic_medical_records', validated_data.get('has_electronic_medical_records', False))
+            validated_data['has_telemedicine_capabilities'] = digital.get('telemedicine_capabilities', validated_data.get('has_telemedicine_capabilities', False))
+            validated_data['has_online_appointment_booking'] = digital.get('online_appointment_booking', validated_data.get('has_online_appointment_booking', False))
+            validated_data['has_patient_portal'] = digital.get('patient_portal', validated_data.get('has_patient_portal', False))
+            validated_data['has_mobile_application'] = digital.get('mobile_app', validated_data.get('has_mobile_application', False))
+            validated_data['has_api_integration'] = digital.get('api_integration_ready', validated_data.get('has_api_integration', False))
+
+        # Process Financial Information (frontend sends at TOP LEVEL as registration_fees_paid!)
+        if 'registration_fees_paid' in validated_data and isinstance(validated_data['registration_fees_paid'], dict):
+            fees = validated_data.pop('registration_fees_paid')
+            validated_data['government_license_fees'] = fees.get('government_licenses', 0)
+            validated_data['certification_fees'] = fees.get('certification_applications', 0)
+            validated_data['total_registration_fees'] = fees.get('total_paid', 0)
+        # Also check in financial_information comprehensive_data
+        if 'financial_information' in comprehensive_data and comprehensive_data['financial_information']:
+            financial = comprehensive_data['financial_information']
+            if 'registration_fees_paid' in financial:
+                fees = financial['registration_fees_paid']
+                validated_data['government_license_fees'] = fees.get('government_licenses', 0)
+                validated_data['certification_fees'] = fees.get('certification_applications', 0)
+                validated_data['total_registration_fees'] = fees.get('total_paid', 0)
+
+        # DEBUG: Log final data being saved
+        logger.info("-" * 80)
+        logger.info("HOSPITAL CREATION - FINAL DATA TO SAVE")
+        logger.info("-" * 80)
+        logger.info(f"Final validated_data keys: {list(validated_data.keys())}")
+
+        # Log specific field groups
+        medical_director_fields = {k: v for k, v in validated_data.items() if 'medical_director' in k}
+        primary_contact_fields = {k: v for k, v in validated_data.items() if 'primary_contact' in k}
+        admin_contact_fields = {k: v for k, v in validated_data.items() if 'administrative_contact' in k}
+        financial_fields = {k: v for k, v in validated_data.items() if 'fees' in k}
+        digital_fields = {k: v for k, v in validated_data.items() if 'has_' in k}
+
+        logger.info(f"Medical Director fields: {medical_director_fields}")
+        logger.info(f"Primary Contact fields: {primary_contact_fields}")
+        logger.info(f"Administrative Contact fields: {admin_contact_fields}")
+        logger.info(f"Financial fields: {financial_fields}")
+        logger.info(f"Digital fields: {digital_fields}")
+        logger.info("=" * 80)
+
+        # Create the hospital instance with all processed fields
+        hospital = Hospital.objects.create(**validated_data)
+
+        # TODO: Process additional comprehensive_data to create related objects like:
+        # - Insurance relationships
+        # - Government licenses
+        # - Quality certifications
+        # - Compliance frameworks
+        # For now, we store the hospital with all its direct fields
+
+        return hospital
+
+
+# ============================================================================
+# Pharmacy Serializers
+# ============================================================================
+
+from api.models.medical.pharmacy import Pharmacy, NominatedPharmacy
+
+
+class PharmacySerializer(serializers.ModelSerializer):
+    """Serializer for Pharmacy model with calculated fields"""
+
+    is_open = serializers.SerializerMethodField()
+    distance = serializers.SerializerMethodField()
+    full_address = serializers.SerializerMethodField()
+    hospital_name = serializers.CharField(source='hospital.name', read_only=True, allow_null=True)
+
+    class Meta:
+        model = Pharmacy
+        fields = [
+            'id', 'phb_pharmacy_code', 'name', 'description',
+            'address_line_1', 'address_line_2', 'city', 'state', 'postcode', 'country',
+            'phone', 'email', 'website',
+            'electronic_prescriptions_enabled', 'opening_hours', 'services_offered',
+            'latitude', 'longitude',
+            'hospital', 'hospital_name',
+            'is_active', 'verified',
+            'is_open', 'distance', 'full_address',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'is_open', 'distance', 'full_address', 'hospital_name', 'created_at', 'updated_at']
+
+    def get_is_open(self, obj):
+        """Check if pharmacy is currently open"""
+        return obj.is_open_now()
+
+    def get_full_address(self, obj):
+        """Return formatted full address"""
+        return obj.get_full_address()
+
+    def get_distance(self, obj):
+        """Calculate distance from user location if provided in context"""
+        user_lat = self.context.get('user_latitude')
+        user_lng = self.context.get('user_longitude')
+
+        if not (user_lat and user_lng and obj.latitude and obj.longitude):
+            return None
+
+        # Haversine formula for distance calculation
+        from math import radians, sin, cos, sqrt, atan2
+
+        R = 6371  # Earth radius in km
+
+        lat1, lon1 = radians(float(user_lat)), radians(float(user_lng))
+        lat2, lon2 = radians(float(obj.latitude)), radians(float(obj.longitude))
+
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        c = 2 * atan2(sqrt(a), sqrt(1-a))
+
+        distance = R * c
+        return round(distance, 2)  # Distance in km, rounded to 2 decimal places
+
+
+class PharmacyListSerializer(serializers.ModelSerializer):
+    """Simplified serializer for pharmacy listings"""
+
+    is_open = serializers.SerializerMethodField()
+    distance = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Pharmacy
+        fields = [
+            'id', 'phb_pharmacy_code', 'name',
+            'address_line_1', 'city', 'postcode',
+            'phone', 'latitude', 'longitude',
+            'electronic_prescriptions_enabled',
+            'is_active', 'verified', 'is_open', 'distance'
+        ]
+        read_only_fields = ['id', 'is_open', 'distance']
+
+    def get_is_open(self, obj):
+        """Check if pharmacy is currently open"""
+        return obj.is_open_now()
+
+    def get_distance(self, obj):
+        """Calculate distance from user location"""
+        user_lat = self.context.get('user_latitude')
+        user_lng = self.context.get('user_longitude')
+
+        if not (user_lat and user_lng and obj.latitude and obj.longitude):
+            return None
+
+        from math import radians, sin, cos, sqrt, atan2
+
+        R = 6371
+        lat1, lon1 = radians(float(user_lat)), radians(float(user_lng))
+        lat2, lon2 = radians(float(obj.latitude)), radians(float(obj.longitude))
+
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        c = 2 * atan2(sqrt(a), sqrt(1-a))
+
+        return round(R * c, 2)
+
+
+class NominatedPharmacySerializer(serializers.ModelSerializer):
+    """Serializer for NominatedPharmacy model (supports both admin pharmacies and practice pages)"""
+
+    pharmacy = PharmacySerializer(read_only=True)
+    pharmacy_id = serializers.IntegerField(write_only=True, required=False)
+
+    # Add practice page support
+    practice_page = serializers.SerializerMethodField(read_only=True)
+    practice_page_id = serializers.UUIDField(write_only=True, required=False)
+
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_hpn = serializers.CharField(source='user.hpn', read_only=True)
+
+    class Meta:
+        model = NominatedPharmacy
+        fields = [
+            'id', 'user', 'user_email', 'user_hpn',
+            'pharmacy', 'pharmacy_id',
+            'practice_page', 'practice_page_id',
+            'nomination_type', 'is_current',
+            'nominated_at', 'ended_at', 'notes'
+        ]
+        read_only_fields = ['id', 'user', 'user_email', 'user_hpn', 'pharmacy', 'practice_page', 'nominated_at', 'ended_at']
+
+    def get_practice_page(self, obj):
+        """Return practice page data in pharmacy-compatible format"""
+        try:
+            if obj.practice_page:
+                return {
+                    'id': str(obj.practice_page.id),
+                    'name': obj.practice_page.practice_name,
+                    'phb_pharmacy_code': obj.practice_page.linked_registry_entry.phb_license_number if obj.practice_page.linked_registry_entry else 'N/A',
+                    'address_line_1': obj.practice_page.address_line_1 or '',
+                    'address_line_2': obj.practice_page.address_line_2 or '',
+                    'city': obj.practice_page.city or '',
+                    'state': obj.practice_page.state or '',
+                    'postcode': obj.practice_page.postcode or '',
+                    'phone': obj.practice_page.phone or '',
+                    'email': obj.practice_page.email or '',
+                    'website': obj.practice_page.website or '',
+                    'opening_hours': obj.practice_page.opening_hours or {},
+                    'services_offered': obj.practice_page.services_offered or [],
+                    'electronic_prescriptions_enabled': True,  # All verified practice pages support this
+                    'source': 'practice_page'
+                }
+        except Exception as e:
+            # Log error but don't crash
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error serializing practice page: {str(e)}")
+        return None
+
+    def validate_pharmacy_id(self, value):
+        """Validate that the pharmacy exists and is active"""
+        try:
+            pharmacy = Pharmacy.objects.get(id=value)
+            if not pharmacy.is_active:
+                raise serializers.ValidationError("This pharmacy is not currently active.")
+            return value
+        except Pharmacy.DoesNotExist:
+            raise serializers.ValidationError("Pharmacy not found.")
+
+    def create(self, validated_data):
+        """Create a new nomination"""
+        pharmacy_id = validated_data.pop('pharmacy_id')
+        pharmacy = Pharmacy.objects.get(id=pharmacy_id)
+
+        # Create the nomination
+        nomination = NominatedPharmacy.objects.create(
+            pharmacy=pharmacy,
+            **validated_data
+        )
+
+        return nomination
+
+
+class NominatedPharmacyListSerializer(serializers.ModelSerializer):
+    """Simplified serializer for nomination history"""
+
+    pharmacy_name = serializers.SerializerMethodField()
+    pharmacy_code = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NominatedPharmacy
+        fields = [
+            'id', 'pharmacy_name', 'pharmacy_code',
+            'nomination_type', 'is_current',
+            'nominated_at', 'ended_at'
+        ]
+        read_only_fields = ['id', 'pharmacy_name', 'pharmacy_code', 'nominated_at', 'ended_at']
+
+    def get_pharmacy_name(self, obj):
+        """Get pharmacy name from either pharmacy or practice_page"""
+        if obj.pharmacy:
+            return obj.pharmacy.name
+        elif obj.practice_page:
+            return obj.practice_page.practice_name
+        return 'Unknown'
+
+    def get_pharmacy_code(self, obj):
+        """Get pharmacy code from either pharmacy or practice_page"""
+        if obj.pharmacy:
+            return obj.pharmacy.phb_pharmacy_code
+        elif obj.practice_page and obj.practice_page.linked_registry_entry:
+            return obj.practice_page.linked_registry_entry.phb_license_number
+        return 'N/A'

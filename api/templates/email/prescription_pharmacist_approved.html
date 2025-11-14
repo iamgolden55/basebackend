@@ -1,0 +1,333 @@
+{% extends "email/base_email.html" %}
+
+{% block content %}
+<div class="email-container">
+    <div class="header">
+        <h1>Prescription Request Reviewed by Pharmacist ✅</h1>
+    </div>
+
+    <div class="content">
+        <p>Hello Dr. {{ doctor_name }},</p>
+
+        <p>A prescription request has been reviewed and approved by our clinical pharmacist and is ready for your final authorization.</p>
+
+        <div class="pharmacist-review">
+            <h3>💊 Pharmacist Review Summary</h3>
+            <div class="detail-row">
+                <span class="label">Reviewed By:</span>
+                <span class="value">{{ pharmacist_name }}, Clinical Pharmacist</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Review Date:</span>
+                <span class="value">{{ review_date }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Clinical Assessment:</span>
+                <span class="value"><span class="badge badge-approved">✅ APPROVED</span></span>
+            </div>
+        </div>
+
+        {% if pharmacist_notes %}
+        <div class="pharmacist-notes">
+            <h3>Pharmacist's Clinical Notes</h3>
+            <p style="font-style: italic;">"{{ pharmacist_notes }}"</p>
+
+            {% if drug_interactions %}
+            <p><strong>Drug Interactions Checked:</strong> {{ drug_interactions }}</p>
+            {% endif %}
+
+            {% if monitoring_required %}
+            <p style="color: #ff6f00;"><strong>⚠️ Monitoring Required:</strong> {{ monitoring_required }}</p>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <div class="request-summary">
+            <h3>Request Details</h3>
+            <div class="detail-row">
+                <span class="label">Patient Name:</span>
+                <span class="value">{{ patient_name }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Patient HPN:</span>
+                <span class="value">{{ patient_hpn }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Reference Number:</span>
+                <span class="value">{{ request_reference }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Original Request Date:</span>
+                <span class="value">{{ request_date }}</span>
+            </div>
+        </div>
+
+        <div class="patient-info">
+            <h3>Patient Information</h3>
+            <div class="detail-row">
+                <span class="label">Date of Birth:</span>
+                <span class="value">{{ patient_dob }}</span>
+            </div>
+            <div class="detail-row">
+                <span class="label">Age:</span>
+                <span class="value">{{ patient_age }} years</span>
+            </div>
+            {% if allergies %}
+            <div class="detail-row">
+                <span class="label">Known Allergies:</span>
+                <span class="value" style="color: #d32f2f; font-weight: bold;">⚠️ {{ allergies }}</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="medications-list">
+            <h3>Approved Medications ({{ medication_count }})</h3>
+            <table class="medication-table">
+                <thead>
+                    <tr>
+                        <th>Medication</th>
+                        <th>Approved Qty</th>
+                        <th>Dosage Instructions</th>
+                        <th>Refills</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for medication in medications %}
+                    <tr>
+                        <td>
+                            <strong>{{ medication.name }}</strong><br>
+                            <small>{{ medication.strength }} - {{ medication.form }}</small>
+                        </td>
+                        <td>{{ medication.approved_quantity }}</td>
+                        <td>{{ medication.approved_dosage }}</td>
+                        <td>{{ medication.refills_allowed }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="pharmacy-info">
+            <h3>Nominated Pharmacy</h3>
+            <p><strong>{{ pharmacy_name }}</strong></p>
+            <p>{{ pharmacy_address }}</p>
+        </div>
+
+        <div class="action-required">
+            <h3>Action Required - Physician Sign-Off 🎯</h3>
+            <p>As the supervising physician, please review the pharmacist's assessment and:</p>
+            <ul>
+                <li><strong>Authorize & Sign:</strong> Electronically sign the prescription for dispensing</li>
+                <li><strong>Request Modifications:</strong> Adjust quantities, dosages, or refills if needed</li>
+                <li><strong>Decline:</strong> Override pharmacist decision with clinical reasoning</li>
+            </ul>
+            <p style="margin-top: 15px;"><strong>Note:</strong> The clinical pharmacist has already verified drug interactions, allergies, and dosage appropriateness. Your sign-off provides physician oversight and legal authorization.</p>
+        </div>
+
+        <div class="cta-button">
+            <a href="{{ frontend_url }}/professional/prescriptions/{{ request_id }}" class="button">Review & Authorize Prescription</a>
+        </div>
+
+        <div class="footer-note">
+            <p>This is an automated notification. Please do not reply to this email.</p>
+            <p>Log in to your professional dashboard to authorize prescriptions.</p>
+        </div>
+    </div>
+</div>
+
+<style>
+    .email-container {
+        max-width: 600px;
+        margin: 0 auto;
+        font-family: Arial, sans-serif;
+    }
+
+    .header {
+        background-color: #43a047;
+        color: white;
+        padding: 20px;
+        text-align: center;
+        border-radius: 5px 5px 0 0;
+    }
+
+    .header h1 {
+        color: white;
+        margin: 0;
+    }
+
+    .content {
+        padding: 20px;
+        background-color: #ffffff;
+        border-radius: 0 0 5px 5px;
+    }
+
+    .pharmacist-review {
+        background-color: #e8f5e9;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #43a047;
+    }
+
+    .pharmacist-review h3 {
+        margin-top: 0;
+        color: #2e7d32;
+    }
+
+    .pharmacist-notes {
+        background-color: #e1f5fe;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 3px solid #0288d1;
+    }
+
+    .pharmacist-notes h3 {
+        margin-top: 0;
+        color: #01579b;
+    }
+
+    .request-summary {
+        background-color: #f3e5f5;
+        padding: 20px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #6a1b9a;
+    }
+
+    .request-summary h3 {
+        margin-top: 0;
+        color: #4a148c;
+    }
+
+    .patient-info {
+        background-color: #fff3e0;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .patient-info h3 {
+        margin-top: 0;
+        color: #e65100;
+    }
+
+    .detail-row {
+        margin: 10px 0;
+        display: flex;
+        justify-content: space-between;
+    }
+
+    .label {
+        font-weight: bold;
+        color: #666;
+    }
+
+    .value {
+        color: #333;
+    }
+
+    .medications-list {
+        background-color: #f5f5f5;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .medications-list h3 {
+        margin-top: 0;
+        color: #424242;
+    }
+
+    .medication-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 10px;
+    }
+
+    .medication-table th {
+        background-color: #e0e0e0;
+        padding: 10px;
+        text-align: left;
+        font-weight: bold;
+        border-bottom: 2px solid #bdbdbd;
+    }
+
+    .medication-table td {
+        padding: 10px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+
+    .badge {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 3px;
+        font-size: 12px;
+        font-weight: bold;
+    }
+
+    .badge-approved {
+        background-color: #43a047;
+        color: white;
+    }
+
+    .pharmacy-info {
+        background-color: #e8f5e9;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .pharmacy-info h3 {
+        margin-top: 0;
+        color: #2e7d32;
+    }
+
+    .action-required {
+        background-color: #fff3e0;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+        border-left: 4px solid #ff6f00;
+    }
+
+    .action-required h3 {
+        margin-top: 0;
+        color: #e65100;
+    }
+
+    .action-required ul {
+        margin: 10px 0;
+        padding-left: 20px;
+    }
+
+    .cta-button {
+        text-align: center;
+        margin: 30px 0;
+    }
+
+    .button {
+        display: inline-block;
+        background-color: #43a047;
+        color: white !important;
+        padding: 15px 30px;
+        text-decoration: none;
+        border-radius: 5px;
+        font-weight: bold;
+        font-size: 16px;
+    }
+
+    .button:hover {
+        background-color: #2e7d32;
+    }
+
+    .footer-note {
+        border-top: 1px solid #eee;
+        margin-top: 20px;
+        padding-top: 20px;
+        color: #666;
+        text-align: center;
+        font-size: 14px;
+    }
+</style>
+{% endblock %}

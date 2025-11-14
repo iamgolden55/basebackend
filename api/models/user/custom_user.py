@@ -158,6 +158,16 @@ class CustomUser(AbstractUser):
         default='patient'
     )
 
+    # Registry Role for RBAC (Role-Based Access Control)
+    registry_role = models.ForeignKey(
+        'Role',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='users',
+        help_text="Admin role for registry management"
+    )
+
     # Ethnicity choices
     ETHNICITY_CHOICES = [
         ('african', 'African'),
